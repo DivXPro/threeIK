@@ -82,6 +82,21 @@ export class JointSetting {
     if (Math.abs(localNrm.dot(axis)) > ALMOST_ONE) return out.copy(vector);
     return xformQuat(off, out, out);
   }
+
+  /** 在局部 rest 空间求角锥限制（translate get_limited_rotation）；limitation 为空时原样返回 */
+  getLimitedRotation(offset: Quaternion, vector: Vector3, forward: Vector3, out: Vector3): Vector3 {
+    if (!this.limitation) return out.copy(vector);
+    // 专用临时量 _q6/_v6：本方法在逐关节求解循环内被调用，该循环跨迭代持有
+    // _q1(parentGpose)/_v1(from)/_v2(to)，复用会被覆写（Task 9 评审结论）
+    const off = _q6.copy(offset).multiply(this.limitationOffsetDelta);
+    xformQuatInv(off, vector, out);
+    const length = out.length();
+    if (isZeroApprox(length)) return out.copy(vector);
+    out.multiplyScalar(1 / length);
+    this.limitation.solve(forward, this.getLimitationRightAxisVector(_v6), this.limitationRotationOffset, out, out);
+    out.multiplyScalar(length);
+    return xformQuat(off, out, out);
+  }
 }
 
 const _v1 = new Vector3();
@@ -89,11 +104,13 @@ const _v2 = new Vector3();
 const _v3 = new Vector3();
 const _v4 = new Vector3();
 const _v5 = new Vector3();
+const _v6 = new Vector3(); // 专用：JointSetting.getLimitedRotation（逐关节循环内安全）
 const _q1 = new Quaternion();
 const _q2 = new Quaternion();
 const _q3 = new Quaternion();
 const _q4 = new Quaternion();
 const _q5 = new Quaternion();
+const _q6 = new Quaternion(); // 专用：JointSetting.getLimitedRotation（逐关节循环内安全）
 
 /** Godot: IKModifier3D::get_bone_axis（固定 mutableBoneAxes=true） */
 export function getBoneAxis(rig: SkeletonRig, bone: number, direction: BoneDirection, out: Vector3): Vector3 {

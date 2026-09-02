@@ -1,6 +1,7 @@
 import { Bone, Matrix4, Object3D, Quaternion, Vector3 } from 'three';
 import { ThreeIKError } from './errors';
 import { TinyEmitter } from './events';
+import type { Modifier } from '../modifiers/modifier';
 
 type RigEvent = 'rest-updated' | 'warning';
 
@@ -32,6 +33,11 @@ export class SkeletonRig {
   private globalRestQuat!: Float32Array;
   private globalDirty!: Uint8Array;
   private globalDirtyAny = false;
+
+  private modifiers: Modifier[] = [];
+  private prevPosePos!: Float32Array;
+  private prevPoseQuat!: Float32Array;
+  private prevPoseScale!: Float32Array;
 
   /** 重定向位移缩放（Godot motion_scale），默认 1；可用 computeMotionScaleFromBone 设置 */
   motionScale = 1;
@@ -109,6 +115,7 @@ export class SkeletonRig {
     this.globalPos = alloc(3); this.globalQuat = alloc(4);
     this.globalRestPos = alloc(3); this.globalRestQuat = alloc(4);
     this.globalDirty = new Uint8Array(n);
+    this.prevPosePos = alloc(3); this.prevPoseQuat = alloc(4); this.prevPoseScale = alloc(3);
 
     // 构造时的骨骼 TRS = rest pose；base/work 初始化为 rest
     for (let i = 0; i < n; i++) {
@@ -310,14 +317,57 @@ export class SkeletonRig {
     this.emitter.warnOnce(key, message);
   }
 
+  // ---- modifier chain ----
+
+  addModifier(m: Modifier): void {
+    this.modifiers.push(m);
+    m.attach(this);
+  }
+
+  removeModifier(m: Modifier): void {
+    const idx = this.modifiers.indexOf(m);
+    if (idx >= 0) {
+      this.modifiers.splice(idx, 1);
+      m.detach();
+    }
+  }
+
+  getModifiers(): readonly Modifier[] {
+    return this.modifiers;
+  }
+
   // ---- update（Task 7 加入 modifier 管线）----
 
-  update(_delta: number): void {
+  update(delta: number): void {
     this.seedWorkFromBase();
-    // work 已从 base 重seed：全局姿势缓存全部失效，下次读取时惰性重算
-    this.globalDirty.fill(1);
-    this.globalDirtyAny = true;
+    this.markGlobalDirtySubtree(0); // work 整体重置，全局姿势全量失效
+    for (const m of this.modifiers) {
+      if (!m.active || m.influence <= 0) continue;
+      if (m.influence >= 1) {
+        m.processModification(this, delta);
+        continue;
+      }
+      // influence 混合：快照 → 执行 → slerp/lerp（Godot 在 modifier 外做插值）
+      this.prevPosePos.set(this.workPos);
+      this.prevPoseQuat.set(this.workQuat);
+      this.prevPoseScale.set(this.workScale);
+      m.processModification(this, delta);
+      this.blendWorkPose(m.influence);
+    }
     this.writeBackToBones();
+  }
+
+  /** work = prev + (work - prev) * w（逐骨 pos lerp / quat slerp / scale lerp） */
+  private blendWorkPose(w: number): void {
+    for (let i = 0; i < this.bones.length; i++) {
+      _v.fromArray(this.prevPosePos, i * 3).lerp(_v2.fromArray(this.workPos, i * 3), w);
+      _v.toArray(this.workPos, i * 3);
+      _q.fromArray(this.prevPoseQuat, i * 4).slerp(_q2.fromArray(this.workQuat, i * 4), w);
+      _q.toArray(this.workQuat, i * 4);
+      _v.fromArray(this.prevPoseScale, i * 3).lerp(_v2.fromArray(this.workScale, i * 3), w);
+      _v.toArray(this.workScale, i * 3);
+    }
+    if (this.bones.length > 0) this.markGlobalDirtySubtree(0);
   }
 
   protected seedWorkFromBase(): void {
@@ -330,7 +380,10 @@ export class SkeletonRig {
     for (let i = 0; i < this.bones.length; i++) {
       const b = this.bones[i]!;
       b.position.fromArray(this.workPos, i * 3);
-      b.quaternion.fromArray(this.workQuat, i * 4);
+      // float32 缓冲读回的四元数模长略偏离 1（最坏 ~1e-8），写回前归一化，
+      // 与 updateGlobalPose/recomputeGlobalRest 的 normalize 约定一致；
+      // 否则骨骼矩阵会带上微小缩放，且 angleTo 比较会被 acos 在 dot≈1 处放大
+      b.quaternion.fromArray(this.workQuat, i * 4).normalize();
       b.scale.fromArray(this.workScale, i * 3);
     }
   }

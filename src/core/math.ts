@@ -42,6 +42,9 @@ export function getFromToRotation(from: Vector3, to: Vector3, prevRot: Quaternio
 
 /** Godot: get_from_to_rotation_by_axis（axis 单位向量；结果只绕 axis 旋转） */
 export function getFromToRotationByAxis(from: Vector3, to: Vector3, axis: Vector3, out: Quaternion): Quaternion {
+  // 零长 from/to：Godot 经 angle_to = atan2(|cross|, dot) 得 atan2(0,0)=0 → identity；
+  // three.js angleTo 对零长有 denominator===0 → π/2 守卫，必须显式早退对齐（否则返回恒定 90° 旋转）
+  if (from.lengthSq() < CMP_EPSILON * CMP_EPSILON || to.lengthSq() < CMP_EPSILON * CMP_EPSILON) return out.identity();
   const dot = from.dot(to);
   if (dot > ALMOST_ONE) return out.identity();
   if (dot < -ALMOST_ONE) return out.setFromAxisAngle(axis, Math.PI);

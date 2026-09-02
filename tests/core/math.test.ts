@@ -49,6 +49,21 @@ describe('getFromToRotationByAxis', () => {
     const q = getFromToRotationByAxis(new Vector3(1, 0, 0), new Vector3(-1, 0, 0), new Vector3(0, 0, 1), new Quaternion());
     expectVecClose(new Vector3(1, 0, 0).applyQuaternion(q), -1, 0, 0);
   });
+
+  it('is identity for zero-length from', () => {
+    // Godot scene/3d/skeleton_modifier_3d.cpp:297 get_from_to_rotation_by_axis：
+    // 零长 from → dot=0（不触发 ALMOST_ONE 早退）→ angle_to = atan2(|cross|, dot)
+    // （core/math/vector3.h:356-358）= atan2(0, 0) = 0 → Quaternion(axis, 0) = identity。
+    // three.js angleTo 对零长有 denominator===0 → π/2 守卫（Vector3.js:523-537），需显式早退对齐。
+    const q = getFromToRotationByAxis(new Vector3(0, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1), new Quaternion());
+    expect(q.angleTo(new Quaternion())).toBeLessThan(1e-6);
+  });
+
+  it('is identity for zero-length to', () => {
+    // 同上：Godot skeleton_modifier_3d.cpp:297 + vector3.h:356-358，atan2(0, 0) = 0 → identity。
+    const q = getFromToRotationByAxis(new Vector3(0, 1, 0), new Vector3(0, 0, 0), new Vector3(0, 0, 1), new Quaternion());
+    expect(q.angleTo(new Quaternion())).toBeLessThan(1e-6);
+  });
 });
 
 describe('getSwing', () => {

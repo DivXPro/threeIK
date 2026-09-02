@@ -3,6 +3,7 @@ import GUI from 'lil-gui';
 import { CCDIkModifier, FabrikModifier, TwoBoneIkModifier, type SkeletonRig } from 'threeik';
 import { loadSoldier, type LoadedCharacter } from './character';
 import { DragTarget } from './drag-target';
+import { measureChain } from './chain-utils';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createIkTab(ctx: PlaygroundContext): TabHandle {
@@ -16,29 +17,59 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       character = await loadSoldier(ctx.scene);
       const rig = character.rig;
 
-      // 三个可拖拽 target：左手、右手、左脚（外加左腿 pole）
+      // 可拖拽 target：双手、双脚、脊柱（弯腰）、头部（注视）；双膝各一个 pole
       const leftHand = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.7, 1.3, 0.3), 0xff5533);
       const rightHand = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.7, 1.3, 0.3), 0x33ff77);
       const leftFoot = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.25, 0.3, 0.4), 0x3388ff);
+      const rightFoot = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.25, 0.3, 0.4), 0x22dddd);
+      const spine = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.35, 0.5), 0xcc66ff);
+      const head = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.7, 0.9), 0xffffff);
       const leftKneePole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.25, 0.9, 1.2), 0xffcc00);
-      targets = [leftHand, rightHand, leftFoot, leftKneePole];
+      const rightKneePole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.25, 0.9, 1.2), 0xff9933);
+      targets = [leftHand, rightHand, leftFoot, rightFoot, spine, head, leftKneePole, rightKneePole];
       for (const t of targets) ctx.scene.add(t);
 
       const ccd = new CCDIkModifier([{ rootBone: 'mixamorigLeftArm', endBone: 'mixamorigLeftHand', target: leftHand }], { maxIterations: 10 });
       const fabrik = new FabrikModifier([{ rootBone: 'mixamorigRightArm', endBone: 'mixamorigRightHand', target: rightHand }], { maxIterations: 10 });
-      const leg = new TwoBoneIkModifier([{
+      const legL = new TwoBoneIkModifier([{
         rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
         target: leftFoot, poleTarget: leftKneePole,
       }]);
+      const legR = new TwoBoneIkModifier([{
+        rootBone: 'mixamorigRightUpLeg', middleBone: 'mixamorigRightLeg', endBone: 'mixamorigRightFoot',
+        target: rightFoot, poleTarget: rightKneePole,
+      }]);
+      // 脊柱 FABRIK 拉躯干（Spine→Neck），头部 CCD（Neck→Head）在其结果上叠加注视——共享 Neck，故 head 须排在 spine 之后
+      const spineMod = new FabrikModifier([{ rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', target: spine }], { maxIterations: 10 });
+      const headMod = new CCDIkModifier([{ rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', target: head }], { maxIterations: 10 });
       rig.addModifier(ccd);
       rig.addModifier(fabrik);
-      rig.addModifier(leg);
+      rig.addModifier(legL);
+      rig.addModifier(legR);
+      rig.addModifier(spineMod);
+      rig.addModifier(headMod);
+
+      // 位置型 target 硬钳制在链可达半径内（pole/头部注视是方向语义，不钳）
+      for (const [target, rootName, endName] of [
+        [leftHand, 'mixamorigLeftArm', 'mixamorigLeftHand'],
+        [rightHand, 'mixamorigRightArm', 'mixamorigRightHand'],
+        [leftFoot, 'mixamorigLeftUpLeg', 'mixamorigLeftFoot'],
+        [rightFoot, 'mixamorigRightUpLeg', 'mixamorigRightFoot'],
+        [spine, 'mixamorigSpine', 'mixamorigNeck'],
+      ] as const) {
+        const m = measureChain(character.root, rootName, endName);
+        if (m) target.setReachConstraint(m.rootBone, m.reach);
+      }
 
       const frameCb = () => { rig.update(1 / 60); }; // 无动画路径：base = rest，直接 update
       unsubFrame = ctx.onFrame(frameCb);
 
       gui = new GUI({ title: 'IK' });
-      for (const [name, mod] of [['CCD 左臂', ccd], ['FABRIK 右臂', fabrik], ['TwoBone 左腿', leg]] as const) {
+      for (const [name, mod] of [
+        ['CCD 左臂', ccd], ['FABRIK 右臂', fabrik],
+        ['TwoBone 左腿', legL], ['TwoBone 右腿', legR],
+        ['FABRIK 脊柱', spineMod], ['CCD 头部注视', headMod],
+      ] as const) {
         const f = gui.addFolder(name);
         f.add(mod, 'active').name('启用');
         f.add(mod, 'influence', 0, 1, 0.01).name('influence');

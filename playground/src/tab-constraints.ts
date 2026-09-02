@@ -9,6 +9,7 @@ import {
 } from 'threeik';
 import { loadSoldier, type LoadedCharacter } from './character';
 import { DragTarget } from './drag-target';
+import { measureChain } from './chain-utils';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {
@@ -28,6 +29,10 @@ export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {
       const leftHandTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.7, 1.3, 0.3), 0x3388ff);
       targets = [aimTarget, leftHandTarget];
       for (const t of targets) ctx.scene.add(t);
+
+      // 左手球钳制在左臂可达半径内（Aim 目标球是方向语义，不钳）
+      const armChain = measureChain(character.root, 'mixamorigLeftArm', 'mixamorigLeftHand');
+      if (armChain) leftHandTarget.setReachConstraint(armChain.rootBone, armChain.reach);
 
       const aimConfig: AimConfig = {
         applyBone: 'mixamorigHead',

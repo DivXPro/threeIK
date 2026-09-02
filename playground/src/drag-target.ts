@@ -7,6 +7,10 @@ export class DragTarget extends THREE.Object3D {
   private readonly onPointerDown: (e: PointerEvent) => void;
   private readonly onPointerMove: (e: PointerEvent) => void;
   private readonly onPointerUp: () => void;
+  // 可达范围钳制：拖拽写入时把球限制在以 center 世界位置为球心、radius 为半径的球体内，
+  // 防止 target 被拖到链够不着的位置导致视觉脱靶（pole/注视等方向型 target 不要设）
+  private reachCenter: THREE.Object3D | null = null;
+  private reachRadius = 0;
 
   constructor(camera: THREE.Camera, dom: HTMLElement, initial: THREE.Vector3, color = 0xff5533) {
     super();
@@ -23,6 +27,8 @@ export class DragTarget extends THREE.Object3D {
     const plane = new THREE.Plane();
     const ndc = new THREE.Vector2();
     const hit = new THREE.Vector3();
+    const reachCenterWorld = new THREE.Vector3();
+    const reachOffset = new THREE.Vector3();
 
     const setNdc = (e: PointerEvent) => {
       const r = dom.getBoundingClientRect();
@@ -45,6 +51,14 @@ export class DragTarget extends THREE.Object3D {
       setNdc(e);
       ray.setFromCamera(ndc, camera);
       if (ray.ray.intersectPlane(plane, hit)) {
+        if (this.reachCenter) {
+          this.reachCenter.getWorldPosition(reachCenterWorld);
+          reachOffset.copy(hit).sub(reachCenterWorld);
+          if (reachOffset.length() > this.reachRadius) {
+            reachOffset.setLength(this.reachRadius);
+            hit.copy(reachCenterWorld).add(reachOffset);
+          }
+        }
         const parent = this.parent;
         if (parent) parent.worldToLocal(hit);
         this.position.copy(hit);
@@ -61,9 +75,16 @@ export class DragTarget extends THREE.Object3D {
     return this.dragging;
   }
 
+  /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离 */
+  setReachConstraint(center: THREE.Object3D, radius: number): void {
+    this.reachCenter = center;
+    this.reachRadius = radius;
+  }
+
   dispose(): void {
     this.dom.removeEventListener('pointerdown', this.onPointerDown);
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
+    this.reachCenter = null;
   }
 }

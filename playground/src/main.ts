@@ -12,6 +12,8 @@ export interface TabHandle {
 export type PlaygroundContext = ReturnType<typeof createScene>;
 
 const { scene, camera, renderer, onFrame } = createScene(document.getElementById('app')!);
+// 调试句柄：控制台可直接检查场景/页签内部状态（playground 惯例）
+(window as unknown as { __threeik: unknown }).__threeik = { scene, camera, renderer };
 
 async function start() {
   const tabs: Record<string, TabHandle> = {

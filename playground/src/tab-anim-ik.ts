@@ -3,6 +3,7 @@ import GUI from 'lil-gui';
 import { FabrikModifier } from 'threeik';
 import { loadSoldier, type LoadedCharacter } from './character';
 import { DragTarget } from './drag-target';
+import { measureChain } from './chain-utils';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
@@ -17,10 +18,12 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
       character.actions.get('Idle')!.play();
       const rig = character.rig;
 
-      // FABRIK 右手链 target：初始钉在固定世界点，可拖拽
+      // FABRIK 右手链 target：初始钉在固定世界点，可拖拽；钳制在右臂可达半径内
       const handTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.8, 1.2, 0.5), 0x33ff77);
       targets = [handTarget];
       ctx.scene.add(handTarget);
+      const armChain = measureChain(character.root, 'mixamorigRightArm', 'mixamorigRightHand');
+      if (armChain) handTarget.setReachConstraint(armChain.rootBone, armChain.reach);
 
       const fabrik = new FabrikModifier(
         [{ rootBone: 'mixamorigRightArm', endBone: 'mixamorigRightHand', target: handTarget }],

@@ -42,6 +42,9 @@ export class SkeletonRig {
   /** 重定向位移缩放（Godot motion_scale），默认 1；可用 computeMotionScaleFromBone 设置 */
   motionScale = 1;
 
+  /** 字符串 target 的解析器（theatre 接入层注入）：key → Object3D */
+  targetResolver?: (key: string) => Object3D | null | undefined;
+
   private emitter = new TinyEmitter<RigEvent>();
 
   constructor(root: Object3D) {

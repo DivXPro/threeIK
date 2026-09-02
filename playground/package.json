@@ -1,0 +1,20 @@
+{
+  "name": "threeik-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "threeik": "file:..",
+    "lil-gui": "^0.20.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11",
+    "typescript": "^5.6.3",
+    "@types/three": "^0.170.0"
+  }
+}

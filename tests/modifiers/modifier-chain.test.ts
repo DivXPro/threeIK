@@ -81,4 +81,12 @@ describe('modifier pipeline', () => {
     rig.update(0.016);
     expect(spine.quaternion.angleTo(new Quaternion())).toBeLessThan(1e-6);
   });
+
+  it('adding the same modifier instance twice is a no-op', () => {
+    const { rig } = buildRig();
+    const m = new RotateBoneModifier('Spine', 1);
+    rig.addModifier(m);
+    rig.addModifier(m);
+    expect(rig.getModifiers().length).toBe(1);
+  });
 });

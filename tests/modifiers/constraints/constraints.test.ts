@@ -39,6 +39,20 @@ describe('AimModifier', () => {
     expect(aimed.y).toBeGreaterThan(0.5);
     expect(aimed.x).toBeGreaterThan(0.1);
   });
+
+  it('NaN reference object is guarded: warns once and leaves the bone untouched', () => {
+    const rig = buildRig();
+    const target = new Object3D();
+    target.position.set(NaN, NaN, NaN);
+    const warnings: unknown[] = [];
+    rig.on('warning', (p) => warnings.push(p));
+    rig.addModifier(new AimModifier([{ applyBone: 'Head', referenceType: 'object', referenceObject: target }]));
+    rig.update(0.016);
+    const q = rig.getBoneAt(rig.boneIndex('Head')).quaternion;
+    expect(Number.isNaN(q.x + q.y + q.z + q.w)).toBe(false);
+    expect(q.angleTo(new Quaternion())).toBeLessThan(1e-6); // 本帧跳过，保持 rest
+    expect(warnings.length).toBe(1);
+  });
 });
 
 describe('CopyTransformModifier', () => {
@@ -54,5 +68,33 @@ describe('CopyTransformModifier', () => {
     // 偏离 1 ~1.7e-8；angleTo 不归一化输入，acos 在 dot≈1 处把模长漂移放大为 ~5.2e-4
     // 的伪角度（两四元数逐位相同、自身对自身比较亦如此）。归一化后阈值 1e-4 语义不变。
     expect(gq.normalize().angleTo(expected.normalize())).toBeLessThan(1e-4);
+  });
+
+  it('NaN reference position is guarded (copyPosition): warns once, pose untouched', () => {
+    const rig = buildRig();
+    const ref = new Object3D();
+    ref.position.set(NaN, 0, 0);
+    const warnings: unknown[] = [];
+    rig.on('warning', (p) => warnings.push(p));
+    rig.addModifier(new CopyTransformModifier([{ applyBone: 'Head', referenceType: 'object', referenceObject: ref, copyRotation: false, copyPosition: true }]));
+    rig.update(0.016);
+    const head = rig.getBoneAt(rig.boneIndex('Head'));
+    expect(Number.isNaN(head.position.x + head.position.y + head.position.z)).toBe(false);
+    expect(head.position.distanceTo(new Vector3(0, 0.5, 0))).toBeLessThan(1e-6); // rest 局部位置
+    expect(warnings.length).toBe(1);
+  });
+
+  it('NaN reference quaternion is guarded (copyRotation): warns once, pose untouched', () => {
+    const rig = buildRig();
+    const ref = new Object3D();
+    ref.quaternion.set(NaN, NaN, NaN, NaN);
+    const warnings: unknown[] = [];
+    rig.on('warning', (p) => warnings.push(p));
+    rig.addModifier(new CopyTransformModifier([{ applyBone: 'Head', referenceType: 'object', referenceObject: ref, copyRotation: true, copyPosition: false }]));
+    rig.update(0.016);
+    const q = rig.getBoneAt(rig.boneIndex('Head')).quaternion;
+    expect(Number.isNaN(q.x + q.y + q.z + q.w)).toBe(false);
+    expect(q.angleTo(new Quaternion())).toBeLessThan(1e-6); // 本帧跳过，保持 rest
+    expect(warnings.length).toBe(1);
   });
 });

@@ -128,6 +128,12 @@ export class SkeletonRig {
     }
     this.recomputeGlobalRest();
     this.resetToRest();
+
+    // 拓扑可能已变更（增删骨/改层级/重命名）：重建全部 modifier 的索引与链缓存。
+    // 先统一 detach 再统一 attach（RetargetModifier 的 rest-updated 订阅成对退订/重订），
+    // 重建期间 modifier 不持有半新半旧的 rig 状态
+    for (const m of this.modifiers) m.detach();
+    for (const m of this.modifiers) m.attach(this);
   }
 
   // ---- rest ----
@@ -323,6 +329,8 @@ export class SkeletonRig {
   // ---- modifier chain ----
 
   addModifier(m: Modifier): void {
+    // 同一实例重复添加：忽略（否则重复 attach，RetargetModifier 会泄漏一份 rest-updated 订阅）
+    if (this.modifiers.includes(m)) return;
     this.modifiers.push(m);
     m.attach(this);
   }

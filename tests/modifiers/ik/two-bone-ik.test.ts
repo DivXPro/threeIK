@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Bone, Object3D, Vector3 } from 'three';
+import { Bone, Object3D, Quaternion, Vector3 } from 'three';
 import { SkeletonRig } from '../../../src/core/skeleton-rig';
 import { TwoBoneIkModifier } from '../../../src/modifiers/ik/two-bone-ik';
 
@@ -63,5 +63,19 @@ describe('TwoBoneIkModifier', () => {
     const first = rig.getBoneAt(0).quaternion.clone();
     rig.update(0.016);
     expect(rig.getBoneAt(0).quaternion.angleTo(first)).toBeLessThan(1e-4);
+  });
+
+  it('NaN target is guarded: warns once and leaves bones untouched', () => {
+    const rig = buildLeg();
+    const target = makeTarget(NaN, NaN, NaN);
+    const pole = makeTarget(0, 0, 10);
+    const warnings: unknown[] = [];
+    rig.on('warning', (p) => warnings.push(p));
+    rig.addModifier(new TwoBoneIkModifier([{ rootBone: 'Upper', middleBone: 'Lower', endBone: 'Foot', target, poleTarget: pole }]));
+    rig.update(0.016);
+    const q = rig.getBoneAt(0).quaternion;
+    expect(Number.isNaN(q.x + q.y + q.z + q.w)).toBe(false);
+    expect(q.angleTo(new Quaternion())).toBeLessThan(1e-6); // 本帧跳过，保持 rest
+    expect(warnings.length).toBe(1);
   });
 });

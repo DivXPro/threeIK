@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fetch-assets": "node scripts/fetch-soldier.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",

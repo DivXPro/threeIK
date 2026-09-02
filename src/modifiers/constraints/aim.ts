@@ -97,6 +97,10 @@ export function resolveReference(rig: SkeletonRig, c: BoneConstraintConfig, out:
     return false;
   }
   obj.getWorldPosition(out);
+  if (Number.isNaN(out.x + out.y + out.z)) {
+    rig.warnOnce(`aim-ref-nan:${String(c.referenceObject)}`, 'AimModifier: reference object position is NaN');
+    return false;
+  }
   rig.worldToRigSpace(out, out);
   return true;
 }

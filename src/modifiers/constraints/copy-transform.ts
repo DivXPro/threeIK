@@ -89,6 +89,10 @@ export class CopyTransformModifier extends Modifier {
         obj.updateWorldMatrix(true, false);
         if (copyRot) {
           obj.getWorldQuaternion(_q); // 世界 → rig 空间
+          if (Number.isNaN(_q.x + _q.y + _q.z + _q.w)) {
+            rig.warnOnce(`copy-ref-nan:${String(c.referenceObject)}`, 'CopyTransformModifier: reference object quaternion is NaN');
+            continue;
+          }
           const parentObj = rig.getBoneAt(0).parent;
           if (parentObj) {
             parentObj.updateWorldMatrix(true, false);
@@ -106,6 +110,10 @@ export class CopyTransformModifier extends Modifier {
         }
         if (copyPos) {
           obj.getWorldPosition(_pos);
+          if (Number.isNaN(_pos.x + _pos.y + _pos.z)) {
+            rig.warnOnce(`copy-ref-nan:${String(c.referenceObject)}`, 'CopyTransformModifier: reference object position is NaN');
+            continue;
+          }
           rig.worldToRigSpace(_pos, _pos);
           _pos.sub(_parentPos).applyQuaternion(_parentG.invert());
           if (amount < 1) {

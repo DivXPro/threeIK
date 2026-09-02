@@ -279,5 +279,9 @@ function resolveObj(rig: SkeletonRig, ref: Object3D | string, out: Vector3): Vec
     return null;
   }
   obj.getWorldPosition(out);
+  if (Number.isNaN(out.x + out.y + out.z)) {
+    rig.warnOnce('ik-target-nan', `IK target position is NaN: ${String(ref)}`);
+    return null;
+  }
   return rig.worldToRigSpace(out, out);
 }

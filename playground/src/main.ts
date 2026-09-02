@@ -1,5 +1,8 @@
 import { createScene } from './scene';
 import { createIkTab } from './tab-ik';
+import { createConstraintsTab } from './tab-constraints';
+import { createRetargetTab } from './tab-retarget';
+import { createAnimIkTab } from './tab-anim-ik';
 
 export interface TabHandle {
   mount(): void;
@@ -13,6 +16,9 @@ const { scene, camera, renderer, onFrame } = createScene(document.getElementById
 async function start() {
   const tabs: Record<string, TabHandle> = {
     'IK': createIkTab({ scene, camera, renderer, onFrame }),
+    '约束': createConstraintsTab({ scene, camera, renderer, onFrame }),
+    '重定向': createRetargetTab({ scene, camera, renderer, onFrame }),
+    '动画+IK': createAnimIkTab({ scene, camera, renderer, onFrame }),
   };
   const tabsEl = document.getElementById('tabs')!;
   let active: TabHandle | null = null;

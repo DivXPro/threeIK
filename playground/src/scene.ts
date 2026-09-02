@@ -34,6 +34,12 @@ export function createScene(container: HTMLElement) {
 
   return {
     scene, camera, renderer,
-    onFrame(cb: (dt: number) => void) { frameCbs.push(cb); },
+    onFrame(cb: (dt: number) => void): () => void {
+      frameCbs.push(cb);
+      return () => {
+        const i = frameCbs.indexOf(cb);
+        if (i >= 0) frameCbs.splice(i, 1);
+      };
+    },
   };
 }

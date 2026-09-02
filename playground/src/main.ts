@@ -1,15 +1,19 @@
 import { createScene } from './scene';
+import { createIkTab } from './tab-ik';
 
 export interface TabHandle {
   mount(): void;
   unmount(): void;
 }
 
+export type PlaygroundContext = ReturnType<typeof createScene>;
+
 const { scene, camera, renderer, onFrame } = createScene(document.getElementById('app')!);
 
 async function start() {
-  // Task 20/21 在此注册页签：const tabs = { 'IK': ikTab(...), ... }
-  const tabs: Record<string, TabHandle> = {};
+  const tabs: Record<string, TabHandle> = {
+    'IK': createIkTab({ scene, camera, renderer, onFrame }),
+  };
   const tabsEl = document.getElementById('tabs')!;
   let active: TabHandle | null = null;
   for (const [name, tab] of Object.entries(tabs)) {
@@ -26,7 +30,6 @@ async function start() {
   }
   Object.values(tabs)[0]?.mount();
   tabsEl.querySelector('button')?.classList.add('active');
-  void scene; void camera; void renderer; void onFrame; // Task 20/21 使用
 }
 
 start();

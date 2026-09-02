@@ -34,7 +34,12 @@ async function start() {
     };
     tabsEl.appendChild(btn);
   }
-  Object.values(tabs)[0]?.mount();
+  // 初始页签必须同步赋值 active，否则首次切页签时 active 为 null、初始页签永远不会 unmount（GUI/角色/帧回调全部泄漏）
+  const first = Object.values(tabs)[0];
+  if (first) {
+    active = first;
+    first.mount();
+  }
   tabsEl.querySelector('button')?.classList.add('active');
 }
 

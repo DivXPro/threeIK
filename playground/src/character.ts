@@ -17,8 +17,14 @@ export async function loadSoldier(scene: THREE.Scene, position = new THREE.Vecto
   root.position.copy(position);
   scene.add(root);
 
+  // 模型含多个 SkinnedMesh（Soldier: 身体 49 骨 + 护目镜 2 骨）——取骨架最大者，traverse 会持续覆写，勿取最后一个
   let skinned: THREE.SkinnedMesh | null = null;
-  root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned = o as THREE.SkinnedMesh; });
+  root.traverse((o) => {
+    const m = o as THREE.SkinnedMesh;
+    if (m.isSkinnedMesh && (!skinned || m.skeleton.bones.length > (skinned as THREE.SkinnedMesh).skeleton.bones.length)) {
+      skinned = m;
+    }
+  });
   if (!skinned) throw new Error('Soldier.glb: no SkinnedMesh found');
   // TS 控制流收窄不追踪闭包内赋值，这里断言恢复 SkinnedMesh 类型
   const mesh = skinned as THREE.SkinnedMesh;

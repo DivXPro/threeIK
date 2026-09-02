@@ -212,6 +212,72 @@ export class SkeletonRig {
       b.quaternion.fromArray(this.restQuat, i * 4);
       b.scale.fromArray(this.restScale, i * 3);
     }
+    this.globalDirty.fill(1);
+    this.globalDirtyAny = true;
+  }
+
+  // ---- working pose（modifier 写入面）----
+
+  /** modifier 写局部旋转；子树全局姿势标脏（Godot set_bone_pose_rotation） */
+  setPoseRotation(i: number, q: Quaternion): void {
+    q.toArray(this.workQuat, i * 4);
+    this.markGlobalDirtySubtree(i);
+  }
+
+  setPosePosition(i: number, v: Vector3): void {
+    v.toArray(this.workPos, i * 3);
+    this.markGlobalDirtySubtree(i);
+  }
+
+  getPoseRotation(i: number, out: Quaternion): Quaternion {
+    return out.fromArray(this.workQuat, i * 4);
+  }
+
+  getPosePosition(i: number, out: Vector3): Vector3 {
+    return out.fromArray(this.workPos, i * 3);
+  }
+
+  // ---- global pose ----
+
+  getGlobalPosePosition(i: number, out: Vector3): Vector3 {
+    if (this.globalDirtyAny) this.updateGlobalPose();
+    return out.fromArray(this.globalPos, i * 3);
+  }
+
+  getGlobalPoseQuaternion(i: number, out: Quaternion): Quaternion {
+    if (this.globalDirtyAny) this.updateGlobalPose();
+    return out.fromArray(this.globalQuat, i * 4);
+  }
+
+  /** DFS 单遍前向扫描，只重算脏段（父索引恒小于子索引，父必先算完） */
+  updateGlobalPose(): void {
+    const n = this.bones.length;
+    for (let i = 0; i < n; i++) {
+      if (!this.globalDirty[i]) continue;
+      const p = this.parent[i]!;
+      _v.fromArray(this.workPos, i * 3);
+      _q.fromArray(this.workQuat, i * 4);
+      if (p < 0) {
+        _v.toArray(this.globalPos, i * 3);
+        _q.normalize().toArray(this.globalQuat, i * 4);
+      } else {
+        const gq = _q2.fromArray(this.globalQuat, p * 4);
+        _v.applyQuaternion(gq).add(_v2.fromArray(this.globalPos, p * 3));
+        _v.toArray(this.globalPos, i * 3);
+        _q2.multiply(_q).normalize().toArray(this.globalQuat, i * 4);
+      }
+      this.globalDirty[i] = 0;
+    }
+    this.globalDirtyAny = false;
+  }
+
+  getSubtreeSpan(i: number): number {
+    return this.span[i]!;
+  }
+
+  private markGlobalDirtySubtree(i: number): void {
+    this.globalDirty.fill(1, i, i + this.span[i]!);
+    this.globalDirtyAny = true;
   }
 
   // ---- rig space ----
@@ -248,6 +314,9 @@ export class SkeletonRig {
 
   update(_delta: number): void {
     this.seedWorkFromBase();
+    // work 已从 base 重seed：全局姿势缓存全部失效，下次读取时惰性重算
+    this.globalDirty.fill(1);
+    this.globalDirtyAny = true;
     this.writeBackToBones();
   }
 

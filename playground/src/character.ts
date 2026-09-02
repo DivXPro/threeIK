@@ -8,6 +8,7 @@ export interface LoadedCharacter {
   mixer: THREE.AnimationMixer;
   actions: Map<string, THREE.AnimationAction>;
   boneMap: BoneMap;
+  helper: THREE.SkeletonHelper;
 }
 
 export async function loadSoldier(scene: THREE.Scene, position = new THREE.Vector3()): Promise<LoadedCharacter> {
@@ -33,6 +34,8 @@ export async function loadSoldier(scene: THREE.Scene, position = new THREE.Vecto
   const actions = new Map<string, THREE.AnimationAction>();
   for (const clip of gltf.animations) actions.set(clip.name, mixer.clipAction(clip));
 
-  scene.add(new THREE.SkeletonHelper(root));
-  return { root, rig, mixer, actions, boneMap };
+  // helper 挂 scene（matrix 别名骨骼 matrixWorld，不可作 root 子节点）并返回引用，页签 unmount 负责移除
+  const helper = new THREE.SkeletonHelper(root);
+  scene.add(helper);
+  return { root, rig, mixer, actions, boneMap, helper };
 }

@@ -19,6 +19,7 @@ export function createRetargetTab(ctx: PlaygroundContext): TabHandle {
       mannequin = buildMannequin(1.4);
       mannequin.root.position.set(1.2, 0, 0);
       ctx.scene.add(mannequin.root);
+      ctx.scene.add(mannequin.helper);
 
       character.rig.motionScale = character.rig.computeMotionScaleFromBone('mixamorigHips');
       mannequin.rig.motionScale = mannequin.rig.computeMotionScaleFromBone('Hips');
@@ -55,8 +56,14 @@ export function createRetargetTab(ctx: PlaygroundContext): TabHandle {
       gui = null;
       unsubFrame?.();
       unsubFrame = null;
-      if (character) ctx.scene.remove(character.root);
-      if (mannequin) ctx.scene.remove(mannequin.root);
+      if (character) {
+        ctx.scene.remove(character.root);
+        ctx.scene.remove(character.helper);
+      }
+      if (mannequin) {
+        ctx.scene.remove(mannequin.root);
+        ctx.scene.remove(mannequin.helper);
+      }
       character = null;
       mannequin = null;
       retarget = null;

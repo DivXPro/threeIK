@@ -54,7 +54,10 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       gui = null;
       unsubFrame?.();
       unsubFrame = null;
-      if (character) ctx.scene.remove(character.root);
+      if (character) {
+        ctx.scene.remove(character.root);
+        ctx.scene.remove(character.helper);
+      }
       for (const t of targets) {
         ctx.scene.remove(t);
         t.dispose();

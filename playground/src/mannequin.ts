@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { SkeletonRig, HUMANOID_PROFILE } from 'threeik';
 
 /** 按 profile 层级生成无网格骨架（SkeletonHelper 可视化），scale 缩放肢体长度 */
-export function buildMannequin(scale = 1.4): { root: THREE.Object3D; rig: SkeletonRig } {
+export function buildMannequin(scale = 1.4): { root: THREE.Object3D; rig: SkeletonRig; helper: THREE.SkeletonHelper } {
   // 骨架比例表（单位米，沿主轴 -Y 向下/±X 向两侧的人形惯例；只生成 Body 主干 + 四肢，手指略）
   const L: Record<string, [number, number, number]> = {
     Root: [0, 0, 0],
@@ -27,7 +27,9 @@ export function buildMannequin(scale = 1.4): { root: THREE.Object3D; rig: Skelet
     if (parentBone) parentBone.add(bone);
     else root.add(bone);
   }
-  root.add(new THREE.SkeletonHelper(bones.get('Hips')!));
+  // SkeletonHelper 须挂 scene 而非 root：helper.matrix 别名骨骼 matrixWorld，
+  // 作为被移动 root 的子节点会叠加父变换（双重变换），且随 root 移除无法单独管理
+  const helper = new THREE.SkeletonHelper(bones.get('Hips')!);
   const rig = new SkeletonRig(bones.get('Root')!);
-  return { root, rig };
+  return { root, rig, helper };
 }

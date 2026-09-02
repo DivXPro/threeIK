@@ -1,7 +1,7 @@
 import { Object3D, Quaternion, Vector3 } from 'three';
 import type { SkeletonRig } from '../../core/skeleton-rig';
 import { ThreeIKError } from '../../core/errors';
-import { isZeroApprox, isEqualApprox, snapVectorToPlane, xformQuat, xformQuatInv } from '../../core/math';
+import { isZeroApprox, isEqualApprox, snapVectorToPlane, xformQuat, xformQuatInv, getFromToRotationByAxis, getRollAngle, getSwing, CMP_EPSILON } from '../../core/math';
 import { vectorFromBoneAxis, vectorFromRotationAxis, vectorFromSecondaryDirection } from '../../core/bone-axes';
 import type { BoneDirection, RotationAxis, SecondaryDirection } from '../../core/bone-axes';
 import type { JointLimitation } from './joint-limitation';
@@ -66,11 +66,34 @@ export class JointSetting {
   getLimitationRightAxisVector(out: Vector3): Vector3 {
     return vectorFromSecondaryDirection(this.limitationRightAxis, this.limitationRightAxisVector, out);
   }
+
+  /** 把 vector 投影到以 rotationAxis 为法线的旋转平面（offset = 参考系四元数） */
+  getProjectedRotation(offset: Quaternion, vector: Vector3, out: Vector3): Vector3 {
+    if (this.rotationAxis === 'all') return out.copy(vector);
+    const ALMOST_ONE = 1 - CMP_EPSILON;
+    const axis = this.getRotationAxisVector(_v2).normalize();
+    const off = _q1.copy(offset).multiply(this.limitationOffsetDelta);
+    xformQuatInv(off, vector, out);
+    const length = out.length();
+    const localNrm = _v1.copy(out);
+    if (!isZeroApprox(length)) localNrm.multiplyScalar(1 / length);
+    snapVectorToPlane(axis, localNrm, out);
+    if (!isZeroApprox(length)) out.normalize().multiplyScalar(length);
+    if (Math.abs(localNrm.dot(axis)) > ALMOST_ONE) return out.copy(vector);
+    return xformQuat(off, out, out);
+  }
 }
 
 const _v1 = new Vector3();
 const _v2 = new Vector3();
+const _v3 = new Vector3();
+const _v4 = new Vector3();
+const _v5 = new Vector3();
 const _q1 = new Quaternion();
+const _q2 = new Quaternion();
+const _q3 = new Quaternion();
+const _q4 = new Quaternion();
+const _q5 = new Quaternion();
 
 /** Godot: IKModifier3D::get_bone_axis（固定 mutableBoneAxes=true） */
 export function getBoneAxis(rig: SkeletonRig, bone: number, direction: BoneDirection, out: Vector3): Vector3 {
@@ -189,6 +212,80 @@ export class IKChain {
       info.currentLpose.copy(info.currentLrest);
       info.currentGpose.copy(parentGpose).multiply(info.currentLpose).normalize();
       parentGpose.copy(info.currentGpose);
+    }
+    this.cacheCurrentVectors(rig);
+  }
+
+  /** 链坐标 → 各骨 currentLpose；angularDeltaLimit = 每次迭代最大角度增量（弧度） */
+  cacheCurrentJointRotations(rig: SkeletonRig, angularDeltaLimit = Math.PI): void {
+    const parent = rig.getParentIndex(this.rootBone);
+    const parentGpose = _q1.identity();
+    if (parent >= 0) rig.getGlobalPoseQuaternion(parent, parentGpose);
+
+    for (let i = 0; i < this.joints.length; i++) {
+      const info = this.solverInfos[i];
+      if (!info) continue;
+      const js = this.jointSettings[i]!;
+      const bone = this.joints[i]!;
+      rig.getPoseRotation(bone, info.currentLrest);
+      info.currentGrest.copy(parentGpose).multiply(info.currentLrest).normalize();
+      if (js.useRestForLimitation) {
+        // limitationOffsetDelta = (currentLrest^-1 * restQuat).normalized
+        rig.getRestQuaternion(bone, js.limitationOffsetDelta);
+        js.limitationOffsetDelta.premultiply(_q2.copy(info.currentLrest).invert()).normalize();
+      } else {
+        js.limitationOffsetDelta.identity();
+      }
+      const from = _v1.copy(info.forwardVector);
+      const to = xformQuatInv(info.currentGrest, info.currentVector, _v2).normalize();
+      const prev = _q3.copy(info.currentLpose);
+      if (js.rotationAxis === 'all') {
+        // lpose = lrest * getSwing(fromTo(from, to), from)
+        _q2.setFromUnitVectors(from, to);
+        getSwing(_q2, from, _q4);
+        info.currentLpose.copy(info.currentLrest).multiply(_q4);
+      } else if (js.useRestForLimitation) {
+        const poseFromRest = _q2.copy(js.limitationOffsetDelta).invert();
+        const axis = js.getRotationAxisVector(_v3).normalize();
+        // toRest = 平面投影后的目标方向
+        const toRest = xformQuat(poseFromRest, to, _v4);
+        snapVectorToPlane(axis, toRest, toRest);
+        if (isZeroApprox(toRest.lengthSq())) {
+          toRest.copy(from);
+        } else {
+          toRest.normalize();
+        }
+        const twist = _q4.identity();
+        if (!isZeroApprox(from.lengthSq())) {
+          const forwardNrm = _v5.copy(from).normalize();
+          twist.setFromAxisAngle(forwardNrm, getRollAngle(poseFromRest, forwardNrm));
+        }
+        // lpose = lrest * delta * fromToByAxis(from, toRest, axis) * twist
+        getFromToRotationByAxis(from, toRest, axis, _q5);
+        info.currentLpose.copy(info.currentLrest)
+          .multiply(js.limitationOffsetDelta).multiply(_q5).multiply(twist);
+      } else {
+        const axis = js.getRotationAxisVector(_v3).normalize();
+        getFromToRotationByAxis(from, to, axis, _q2);
+        info.currentLpose.copy(info.currentLrest).multiply(_q2);
+      }
+      // angular delta 钳制（prev 是模块临时量 _q3，先在其上 slerp 再回写，避免自引用 slerp 丢失新值）
+      const diff = prev.angleTo(info.currentLpose);
+      if (!isZeroApprox(diff)) {
+        info.currentLpose.copy(prev.slerp(info.currentLpose, Math.min(1, angularDeltaLimit / diff)));
+      }
+      info.currentGpose.copy(parentGpose).multiply(info.currentLpose).normalize();
+      parentGpose.copy(info.currentGpose);
+    }
+
+    // 把角度钳制回写链坐标（apply back）
+    if (this.chain.length === 0) return;
+    rig.getGlobalPosePosition(this.rootBone, this.chain[0]!);
+    for (let i = 0; i < this.solverInfos.length; i++) {
+      const info = this.solverInfos[i];
+      if (!info || i + 1 >= this.chain.length) continue;
+      xformQuat(info.currentGpose, info.forwardVector, _v1);
+      this.chain[i + 1]!.copy(this.chain[i]!).addScaledVector(_v1, info.length);
     }
     this.cacheCurrentVectors(rig);
   }

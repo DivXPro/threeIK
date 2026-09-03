@@ -35,9 +35,10 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       const head = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.7, 0.9), 0xffffff, ctx.dragControl);
       const leftKneePole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.25, 0.9, 1.2), 0xffcc00, ctx.dragControl);
       const rightKneePole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.25, 0.9, 1.2), 0xff9933, ctx.dragControl);
-      // 肘 pole 在肘的后下方：肘的自然朝向是后下（膝朝前），pole 放前面会把手臂掰成肘朝上的托盘姿势
-      const leftElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.4, 1.0, -0.35), 0xccff66, ctx.dragControl);
-      const rightElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.4, 1.0, -0.35), 0x66ffcc, ctx.dragControl);
+      // 肘 pole 默认在肘的下方偏后（≈肘朝下，自然垂臂的弯曲方向；相对求解后姿态设计，
+      // 收拢/携带发生在下方 rig.update(0) 之后）。放太靠外后会把肘拉成外张的"猩猩臂"
+      const leftElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.38, 0.98, 0.2), 0xccff66, ctx.dragControl);
+      const rightElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.38, 0.98, 0.2), 0x66ffcc, ctx.dragControl);
       targets = [hips, leftHand, rightHand, leftFoot, rightFoot, spine, head, leftKneePole, rightKneePole, leftElbowPole, rightElbowPole];
       for (const t of targets) ctx.scene.add(t);
 
@@ -93,6 +94,11 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       rig.addModifier(armR);
       rig.addModifier(headMod);
 
+      // 先求解一帧再设钳制/携带：下面的锚点（肩/肘/颈/膝…）都要取求解后的世界位置。
+      // 否则携带偏移按 rest 的 T-pose 捕获（肘在腋下 0.4m），手臂弯下后偏移不变，
+      // 肘 pole 球会被甩到大腿侧——球的归属看不出，且初始方向已贴死锥底，朝下拖成死区
+      rig.update(0);
+
       // 位置型 target 硬钳制在链可达半径内
       const reachEntries: { target: DragTarget; rootBone: THREE.Object3D; reach: number }[] = [];
       for (const [target, rootName, endName] of [
@@ -130,7 +136,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         reachScale: 1,
         hipsRadius: 0.4,
         headRadius: 0.6, headAngleDeg: 105,
-        poleRadius: 0.5, poleAngleDeg: 100,
+        poleRadius: 0.5, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
       };
       const applyReach = () => {
         for (const e of reachEntries) e.target.setReachConstraint(e.rootBone, e.reach * clampParams.reachScale);
@@ -141,12 +147,15 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         head.setConeConstraint(neckBone, facing, THREE.MathUtils.degToRad(clampParams.headAngleDeg), 0, Infinity);
       };
       const applyPoleCone = () => {
-        for (const [pole, joint, axis] of [
-          [leftKneePole, leftKneeBone, facing], [rightKneePole, rightKneeBone, facing],
-          [leftElbowPole, leftElbowBone, backward], [rightElbowPole, rightElbowBone, backward],
+        for (const [pole, joint, axis, deg] of [
+          [leftKneePole, leftKneeBone, facing, clampParams.poleAngleDeg],
+          [rightKneePole, rightKneeBone, facing, clampParams.poleAngleDeg],
+          // 肘可指向后方任意方向（含垂在身侧的正下方），膝用的 100° 会把这些自然姿势挡在锥外
+          [leftElbowPole, leftElbowBone, backward, clampParams.elbowPoleAngleDeg],
+          [rightElbowPole, rightElbowBone, backward, clampParams.elbowPoleAngleDeg],
         ] as const) {
           pole.setReachConstraint(joint, clampParams.poleRadius);
-          pole.setConeConstraint(joint, axis, THREE.MathUtils.degToRad(clampParams.poleAngleDeg), 0, Infinity);
+          pole.setConeConstraint(joint, axis, THREE.MathUtils.degToRad(deg), 0, Infinity);
         }
       };
       applyReach();
@@ -216,7 +225,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
       const fPole = fClamp.addFolder('膝/肘 pole 球');
       fPole.add(clampParams, 'poleRadius', 0.15, 1, 0.05).name('半径(m)').onChange(applyPoleCone);
-      fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyPoleCone);
+      fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
+      fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

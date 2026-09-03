@@ -5,9 +5,16 @@ const _c = new THREE.Vector3(); // 锚点世界位置
 const _off = new THREE.Vector3();
 const _ortho = new THREE.Vector3();
 const _snap = new THREE.Vector3(); // snapIntoConstraints 的命中点（与 _c/_off/_ortho 不别名）
+const _planeHit = new THREE.Vector3(); // moveTo 的拖拽平面命中点
+
+// 拖拽命中间隙：按相机距离换算的世界容差（~26px 屏幕等效），
+// 让小球在手机上也能点到；视觉球体本身保持 0.0225
+const HIT_TOLERANCE_PER_METER = 0.011;
 
 export class DragTarget extends THREE.Object3D {
   readonly ball: THREE.Mesh;
+  /** 视觉球半径（拖拽命中在此基础上再加按相机距离换算的容差） */
+  readonly ballRadius: number;
   private dragging = false;
   private readonly dom: HTMLElement;
   private readonly onPointerDown: (e: PointerEvent) => void;
@@ -50,6 +57,7 @@ export class DragTarget extends THREE.Object3D {
       new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }),
     );
     this.ball.renderOrder = 999;
+    this.ballRadius = 0.0225;
     this.add(this.ball);
 
     const ray = new THREE.Raycaster();
@@ -65,7 +73,10 @@ export class DragTarget extends THREE.Object3D {
     this.onPointerDown = (e: PointerEvent) => {
       setNdc(e);
       ray.setFromCamera(ndc, camera);
-      if (ray.intersectObject(this.ball, false).length > 0) {
+      // 容差命中：raycast 缩小版球体容易脱靶（尤其触屏），按相机距离给射线一个世界余量
+      this.ball.getWorldPosition(_c);
+      const tolerance = camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER;
+      if (ray.ray.distanceToPoint(_c) <= this.ballRadius + tolerance) {
         this.dragging = true;
         // 拖拽平面：过当前位置、面向相机
         camera.getWorldDirection(plane.normal);
@@ -82,11 +93,7 @@ export class DragTarget extends THREE.Object3D {
       setNdc(e);
       ray.setFromCamera(ndc, camera);
       if (ray.ray.intersectPlane(plane, hit)) {
-        this.applyConstraints(hit);
-        const parent = this.parent;
-        if (parent) parent.worldToLocal(hit);
-        this.position.copy(hit);
-        this.updateCarryOffset(); // 拖拽即改写相对偏移，松手后按新偏移跟随
+        this.applyDragPoint(hit);
       }
     };
     this.onPointerUp = () => {
@@ -121,6 +128,20 @@ export class DragTarget extends THREE.Object3D {
     this.coneMinDist = minDist;
     this.coneMaxDist = maxDist;
     this.snapIntoConstraints();
+  }
+
+  /** 拖拽命中点（世界空间）过约束管线后写入位置；指针拖拽与 moveTo 共用 */
+  private applyDragPoint(hit: THREE.Vector3): void {
+    this.applyConstraints(hit);
+    const parent = this.parent;
+    if (parent) parent.worldToLocal(hit);
+    this.position.copy(hit);
+    this.updateCarryOffset(); // 拖拽即改写相对偏移，松手后按新偏移跟随
+  }
+
+  /** 编程式移动（Theatre 绑定/自动化测试）：过与指针拖拽相同的约束管线并刷新携带偏移 */
+  moveTo(worldPos: THREE.Vector3): void {
+    this.applyDragPoint(_planeHit.copy(worldPos));
   }
 
   /** 依次应用可达球与方向锥钳制（就地修改 hit，世界空间） */

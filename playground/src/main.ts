@@ -11,16 +11,21 @@ export interface TabHandle {
 
 export type PlaygroundContext = ReturnType<typeof createScene>;
 
-const { scene, camera, renderer, onFrame } = createScene(document.getElementById('app')!);
+const ctx = createScene(document.getElementById('app')!);
 // 调试句柄：控制台可直接检查场景/页签内部状态（playground 惯例）
-(window as unknown as { __threeik: unknown }).__threeik = { scene, camera, renderer };
+(window as unknown as { __threeik: unknown }).__threeik = {
+  scene: ctx.scene,
+  camera: ctx.camera,
+  renderer: ctx.renderer,
+  controls: ctx.controls,
+};
 
 async function start() {
   const tabs: Record<string, TabHandle> = {
-    'IK': createIkTab({ scene, camera, renderer, onFrame }),
-    '约束': createConstraintsTab({ scene, camera, renderer, onFrame }),
-    '重定向': createRetargetTab({ scene, camera, renderer, onFrame }),
-    '动画+IK': createAnimIkTab({ scene, camera, renderer, onFrame }),
+    'IK': createIkTab(ctx),
+    '约束': createConstraintsTab(ctx),
+    '重定向': createRetargetTab(ctx),
+    '动画+IK': createAnimIkTab(ctx),
   };
   const tabsEl = document.getElementById('tabs')!;
   let active: TabHandle | null = null;

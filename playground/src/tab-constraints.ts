@@ -24,9 +24,9 @@ export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {
       const rig = character.rig;
 
       // Aim 目标球：未拖拽时自动绕圈，拖拽时由用户控制
-      const aimTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.6, 1.0), 0xff5533);
+      const aimTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.6, 1.0), 0xff5533, ctx.dragControl);
       // CCD 左手 target：把左手拉开，为 CopyTransform 制造左右手差异
-      const leftHandTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.7, 1.3, 0.3), 0x3388ff);
+      const leftHandTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.7, 1.3, 0.3), 0x3388ff, ctx.dragControl);
       targets = [aimTarget, leftHandTarget];
       for (const t of targets) ctx.scene.add(t);
 

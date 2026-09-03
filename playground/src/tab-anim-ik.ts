@@ -19,7 +19,7 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
       const rig = character.rig;
 
       // FABRIK 右手链 target：初始钉在固定世界点，可拖拽；钳制在右臂可达半径内
-      const handTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.8, 1.2, 0.5), 0x33ff77);
+      const handTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.8, 1.2, 0.5), 0x33ff77, ctx.dragControl);
       targets = [handTarget];
       ctx.scene.add(handTarget);
       const armChain = measureChain(character.root, 'mixamorigRightArm', 'mixamorigRightHand');

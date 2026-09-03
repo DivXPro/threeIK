@@ -11,10 +11,20 @@ export class DragTarget extends THREE.Object3D {
   // 防止 target 被拖到链够不着的位置导致视觉脱靶（pole/注视等方向型 target 不要设）
   private reachCenter: THREE.Object3D | null = null;
   private reachRadius = 0;
+  // 拖球期间禁用 OrbitControls（见 scene.ts dragControl），松手/销毁时恢复
+  private readonly dragControl?: { lock(): void; unlock(): void };
+  private controlLocked = false;
 
-  constructor(camera: THREE.Camera, dom: HTMLElement, initial: THREE.Vector3, color = 0xff5533) {
+  constructor(
+    camera: THREE.Camera,
+    dom: HTMLElement,
+    initial: THREE.Vector3,
+    color = 0xff5533,
+    dragControl?: { lock(): void; unlock(): void },
+  ) {
     super();
     this.dom = dom;
+    this.dragControl = dragControl;
     this.position.copy(initial);
     this.ball = new THREE.Mesh(
       new THREE.SphereGeometry(0.045, 20, 14),
@@ -44,6 +54,10 @@ export class DragTarget extends THREE.Object3D {
         camera.getWorldDirection(plane.normal);
         plane.setFromNormalAndCoplanarPoint(plane.normal, this.getWorldPosition(new THREE.Vector3()));
         dom.setPointerCapture(e.pointerId);
+        if (this.dragControl) {
+          this.dragControl.lock();
+          this.controlLocked = true;
+        }
       }
     };
     this.onPointerMove = (e: PointerEvent) => {
@@ -64,7 +78,10 @@ export class DragTarget extends THREE.Object3D {
         this.position.copy(hit);
       }
     };
-    this.onPointerUp = () => { this.dragging = false; };
+    this.onPointerUp = () => {
+      this.dragging = false;
+      this.releaseControl();
+    };
     dom.addEventListener('pointerdown', this.onPointerDown);
     dom.addEventListener('pointermove', this.onPointerMove);
     dom.addEventListener('pointerup', this.onPointerUp);
@@ -86,5 +103,14 @@ export class DragTarget extends THREE.Object3D {
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
     this.reachCenter = null;
+    this.releaseControl();
+  }
+
+  /** 页签切换等 dispose 发生在拖拽中途时，也要把 OrbitControls 还回去 */
+  private releaseControl(): void {
+    if (this.controlLocked && this.dragControl) {
+      this.dragControl.unlock();
+      this.controlLocked = false;
+    }
   }
 }

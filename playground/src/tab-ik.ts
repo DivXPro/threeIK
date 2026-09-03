@@ -142,7 +142,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         poleKeepAlive: 0.96,
         hipsRadius: 0.4,
         headRadius: 0.35, headAngleDeg: 105,
-        poleRadius: 0.28, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
+        poleRadius: 0.2, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
       };
       const applyReach = () => {
         for (const e of reachEntries) {
@@ -299,7 +299,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('半径(m)').onChange(applyHeadCone);
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
       const fPole = fClamp.addFolder('膝/肘 pole 球');
-      fPole.add(clampParams, 'poleRadius', 0.15, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
+      fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
       fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
       fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
       gui.add(params, 'steerFallback').name('pole 伸展舵控(拉直兜底)');

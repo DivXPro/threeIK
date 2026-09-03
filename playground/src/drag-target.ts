@@ -92,10 +92,19 @@ export class DragTarget extends THREE.Object3D {
     return this.dragging;
   }
 
-  /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离 */
+  /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离。
+   *  当前位置在球外时立即收回到球面上——构造时摆的初始位置不经过拖拽路径，否则会漏钳 */
   setReachConstraint(center: THREE.Object3D, radius: number): void {
     this.reachCenter = center;
     this.reachRadius = radius;
+    const cw = center.getWorldPosition(new THREE.Vector3());
+    const off = this.getWorldPosition(new THREE.Vector3()).sub(cw);
+    if (off.length() > radius) {
+      off.setLength(radius);
+      const clamped = cw.add(off);
+      if (this.parent) this.parent.worldToLocal(clamped);
+      this.position.copy(clamped);
+    }
   }
 
   dispose(): void {

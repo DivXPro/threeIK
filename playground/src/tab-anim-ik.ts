@@ -18,16 +18,17 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
       character.actions.get('Idle')!.play();
       const rig = character.rig;
 
-      // FABRIK 右手链 target：初始钉在固定世界点，可拖拽；钳制在右臂可达半径内
-      const handTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.8, 1.2, 0.5), 0x33ff77, ctx.dragControl);
+      // FABRIK 右手链 target：初始钉在固定世界点，可拖拽；钳制在右臂可达半径内（模型已转正，右臂在 -X 侧）
+      const handTarget = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.55, 1.4, 0.3), 0x33ff77, ctx.dragControl);
       targets = [handTarget];
       ctx.scene.add(handTarget);
       const armChain = measureChain(character.root, 'mixamorigRightArm', 'mixamorigRightHand');
       if (armChain) handTarget.setReachConstraint(armChain.rootBone, armChain.reach);
 
+      // angularDeltaLimit=π：base 每帧被动画重播种，2° 默认值会让手追不上偏离 base 太远的 target
       const fabrik = new FabrikModifier(
         [{ rootBone: 'mixamorigRightArm', endBone: 'mixamorigRightHand', target: handTarget }],
-        { maxIterations: 10 },
+        { maxIterations: 10, angularDeltaLimit: Math.PI },
       );
       rig.addModifier(fabrik);
 
@@ -50,6 +51,7 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
       f.add(fabrik, 'active').name('启用');
       f.add(fabrik, 'influence', 0, 1, 0.01).name('influence');
       f.add(fabrik, 'maxIterations', 1, 30, 1).name('迭代次数');
+      f.add(fabrik, 'angularDeltaLimit', 0, Math.PI, 0.005).name('角度钳制(rad)');
     },
     unmount() {
       gui?.destroy();

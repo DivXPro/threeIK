@@ -15,6 +15,9 @@ export async function loadSoldier(scene: THREE.Scene, position = new THREE.Vecto
   const gltf = await new GLTFLoader().loadAsync('/Soldier.glb');
   const root = gltf.scene;
   root.position.copy(position);
+  // Soldier 出厂面朝 -Z（背对默认相机）、解剖学左侧在世界 -X；绕 Y 转 180° 使其面向 +Z 相机，
+  // 此后"左侧骨 ↔ +X 侧球 / 前方 = +Z"的 playground 布局才在解剖学上成立
+  root.rotation.y = Math.PI;
   scene.add(root);
 
   // 模型含多个 SkinnedMesh（Soldier: 身体 49 骨 + 护目镜 2 骨）——取骨架最大者，traverse 会持续覆写，勿取最后一个

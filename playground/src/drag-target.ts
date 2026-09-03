@@ -29,6 +29,10 @@ export class DragTarget extends THREE.Object3D {
   // 拖球期间禁用 OrbitControls（见 scene.ts dragControl），松手/销毁时恢复
   private readonly dragControl?: { lock(): void; unlock(): void };
   private controlLocked = false;
+  // 跟随锚点：非拖拽时球随锚点（通常是钳制中心骨）世界平移，保持相对偏移——
+  // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
+  private carryAnchor: THREE.Object3D | null = null;
+  private readonly carryOffset = new THREE.Vector3();
 
   constructor(
     camera: THREE.Camera,
@@ -82,6 +86,7 @@ export class DragTarget extends THREE.Object3D {
         const parent = this.parent;
         if (parent) parent.worldToLocal(hit);
         this.position.copy(hit);
+        this.updateCarryOffset(); // 拖拽即改写相对偏移，松手后按新偏移跟随
       }
     };
     this.onPointerUp = () => {
@@ -150,6 +155,29 @@ export class DragTarget extends THREE.Object3D {
     }
   }
 
+  /** 设置跟随锚点：非拖拽时每帧把球携带到「锚点世界位置 + 相对偏移」，偏移在拖拽/收拢后刷新 */
+  setCarry(anchor: THREE.Object3D): void {
+    this.carryAnchor = anchor;
+    this.updateCarryOffset();
+  }
+
+  /** 每帧调用（求解之后，锚点世界位置已更新）：非拖拽时携带球跟随锚点，并重新过钳制 */
+  carryAlong(): void {
+    if (!this.carryAnchor || this.dragging) return;
+    this.carryAnchor.getWorldPosition(_c);
+    _snap.copy(_c).add(this.carryOffset);
+    this.applyConstraints(_snap);
+    if (this.parent) this.parent.worldToLocal(_snap);
+    this.position.copy(_snap);
+    this.updateCarryOffset(); // 钳制可能改写了位置，偏移与实际保持一致
+  }
+
+  private updateCarryOffset(): void {
+    if (!this.carryAnchor) return;
+    this.carryAnchor.getWorldPosition(_c);
+    this.carryOffset.copy(this.getWorldPosition(_snap).sub(_c));
+  }
+
   /** 设置约束时立即把当前位置收拢进约束域（初始位置不经过拖拽路径） */
   private snapIntoConstraints(): void {
     this.getWorldPosition(_snap);
@@ -164,6 +192,7 @@ export class DragTarget extends THREE.Object3D {
     this.dom.removeEventListener('pointerup', this.onPointerUp);
     this.reachCenter = null;
     this.coneAnchor = null;
+    this.carryAnchor = null;
     this.releaseControl();
   }
 

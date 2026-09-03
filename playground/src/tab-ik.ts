@@ -114,10 +114,18 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       applyHeadCone();
       applyPoleCone();
 
+      // 球随锚点携带：拖其他部位带动锚点（脊柱弯腰搬肩、脚球搬膝）时球保持相对偏移跟随，
+      // 不滞留在原地脱离钳制域（动画+IK 页刻意不携带——手钉在世界固定点正是该页的演示语义）
+      for (const e of reachEntries) e.target.setCarry(e.rootBone);
+      head.setCarry(neckBone);
+      leftKneePole.setCarry(leftKneeBone);
+      rightKneePole.setCarry(rightKneeBone);
+
       const _gp = new THREE.Vector3();
       const _gk = new THREE.Vector3();
       const frameCb = () => {
         rig.update(1 / 60); // 无动画路径：base = rest，直接 update
+        for (const t of targets) t.carryAlong(); // 求解后锚点世界位置已更新，非拖拽球跟随
         for (const g of poleGuides) {
           g.pole.getWorldPosition(_gp);
           g.knee.getWorldPosition(_gk); // rig.update 已写回骨骼 TRS，getWorldPosition 现算链路

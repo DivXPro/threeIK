@@ -184,11 +184,74 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       leftElbowPole.setCarry(leftElbowBone);
       rightElbowPole.setCarry(rightElbowBone);
 
+      // A：roll 修正（拉直后 pole 仍驱动前臂扭转，Godot TwoBoneIK 的 pole_direction）。
+      // 取「当前正指向 pole 球的中骨局部轴」作为 poleDirection——求解后姿势实测换算，
+      // 开启瞬间修正量≈0（姿势零跳变）。用 custom 向量而非基轴：Mixamo 左右臂局部系
+      // 不一致（实测一个近 -x、一个近 -y，点积仅 0.74/0.91），写死基轴会带可见跳变
+      {
+        const rootPos = new THREE.Vector3(); const endPos = new THREE.Vector3();
+        const polePos = new THREE.Vector3(); const midQ = new THREE.Quaternion();
+        for (const [mod, rootName, midName, endName, pole] of [
+          [armL, 'mixamorigLeftArm', 'mixamorigLeftForeArm', 'mixamorigLeftHand', leftElbowPole],
+          [armR, 'mixamorigRightArm', 'mixamorigRightForeArm', 'mixamorigRightHand', rightElbowPole],
+        ] as const) {
+          character.root.getObjectByName(rootName)!.getWorldPosition(rootPos);
+          character.root.getObjectByName(endName)!.getWorldPosition(endPos);
+          pole.getWorldPosition(polePos);
+          const axis = endPos.sub(rootPos).normalize();
+          const pv = polePos.sub(rootPos);                 // pv = pole − root
+          pv.addScaledVector(axis, -pv.dot(axis));         // 去轴向分量（getProjectedNormal）
+          if (pv.lengthSq() < 1e-8) continue;              // pole 在轴上，无法定义朝向，跳过
+          pv.normalize();
+          character.root.getObjectByName(midName)!.getWorldQuaternion(midQ).invert();
+          pv.applyQuaternion(midQ);                        // 世界 → 中骨局部
+          mod.updateConfig(0, { poleDirection: 'custom', poleDirectionVector: pv.clone() });
+        }
+      }
+
+      // B：伸展兜底舵控（HIK 的 FK fallthrough 在拖球架构下的等价物）：pole 拖拽中且
+      // 链伸展率 >0.985（pole 位置权已几何归零的死区）时，把 pole 球的帧间位移 1:1 转交给
+      // 末端球——整条直臂/腿被 pole 舵控跟随；拖向身体则伸展率回落、pole 自动恢复本职
+      // （等价"折臂"）。求解器零改动，纯交互层。默认 96% 伸展上限下不会触发；
+      // 把「四肢伸展上限」滑到 1.0 可体验
+      const steerPairs = ([
+        [leftElbowPole, leftHand, 'mixamorigLeftArm', 'mixamorigLeftHand'],
+        [rightElbowPole, rightHand, 'mixamorigRightArm', 'mixamorigRightHand'],
+        [leftKneePole, leftFoot, 'mixamorigLeftUpLeg', 'mixamorigLeftFoot'],
+        [rightKneePole, rightFoot, 'mixamorigRightUpLeg', 'mixamorigRightFoot'],
+      ] as const).map(([pole, endBall, rootName, endName]) => ({
+        pole, endBall,
+        root: character!.root.getObjectByName(rootName)!,
+        end: character!.root.getObjectByName(endName)!,
+        reach: reachEntries.find((e) => e.target === endBall)?.reach ?? 1,
+        prevPos: new THREE.Vector3(), hasPrev: false,
+      }));
+      const params = { steerFallback: true };
+      const STEER_EXT_THRESHOLD = 0.985;
+      const _sRoot = new THREE.Vector3(); const _sEnd = new THREE.Vector3(); const _sDelta = new THREE.Vector3();
+
       const _gp = new THREE.Vector3();
       const _gk = new THREE.Vector3();
       const frameCb = () => {
         rig.update(1 / 60); // 无动画路径：base = rest，直接 update
         for (const t of targets) t.carryAlong(); // 求解后锚点世界位置已更新，非拖拽球跟随
+        if (params.steerFallback) {
+          for (const s of steerPairs) {
+            if (!s.pole.isDragging) { s.hasPrev = false; continue; }
+            s.root.getWorldPosition(_sRoot);
+            s.end.getWorldPosition(_sEnd);
+            const ext = _sRoot.distanceTo(_sEnd) / s.reach;
+            if (ext > STEER_EXT_THRESHOLD && s.hasPrev) {
+              _sDelta.subVectors(s.pole.position, s.prevPos);
+              if (_sDelta.lengthSq() > 1e-10) {
+                // moveTo 过约束管线（可达球收拢照旧）；末端球的携带偏移随动刷新
+                s.endBall.moveTo(_sDelta.add(s.endBall.position));
+              }
+            }
+            s.prevPos.copy(s.pole.position);
+            s.hasPrev = true;
+          }
+        }
         for (const g of poleGuides) {
           g.pole.getWorldPosition(_gp);
           g.joint.getWorldPosition(_gk); // rig.update 已写回骨骼 TRS，getWorldPosition 现算链路
@@ -236,6 +299,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fPole.add(clampParams, 'poleRadius', 0.15, 1, 0.05).name('半径(m)').onChange(applyPoleCone);
       fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
       fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
+      gui.add(params, 'steerFallback').name('pole 伸展舵控(拉直兜底)');
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

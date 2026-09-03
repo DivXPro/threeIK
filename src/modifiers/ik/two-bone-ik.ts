@@ -83,6 +83,12 @@ export class TwoBoneIkModifier extends Modifier {
     super();
   }
 
+  /** 运行时部分更新某条链的配置（如按当前姿势实测得到的 poleDirection 向量）。
+   *  settings 持有同一 config 对象引用，求解路径每帧直读，改动立即生效 */
+  updateConfig(index: number, patch: Partial<TwoBoneIKConfig>): void {
+    Object.assign(this.configs[index]!, patch);
+  }
+
   override attach(rig: SkeletonRig): void {
     super.attach(rig);
     this.settings = this.configs.map((config) => {

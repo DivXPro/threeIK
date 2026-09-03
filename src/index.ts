@@ -19,6 +19,8 @@ export type { AimConfig, BoneConstraintConfig } from './modifiers/constraints/ai
 export { CopyTransformModifier } from './modifiers/constraints/copy-transform';
 export type { CopyTransformConfig } from './modifiers/constraints/copy-transform';
 
+export { RootMotionModifier } from './modifiers/root-motion';
+
 export { RetargetModifier } from './retarget/retarget-modifier';
 export type { RetargetConfig, RetargetFlags } from './retarget/retarget-modifier';
 export { BoneMap, mixamoPreset, readyPlayerMePreset, vrmPreset, identityPreset, suggestBoneMap } from './retarget/bone-map';

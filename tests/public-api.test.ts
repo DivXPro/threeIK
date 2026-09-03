@@ -8,6 +8,7 @@ describe('public API', () => {
       'CCDIkModifier', 'FabrikModifier', 'TwoBoneIkModifier',
       'JointLimitation', 'ConeJointLimitation',
       'AimModifier', 'CopyTransformModifier',
+      'RootMotionModifier',
       'RetargetModifier', 'BoneMap', 'HUMANOID_PROFILE', 'REQUIRED_HUMANOID_BONES',
       'mixamoPreset', 'readyPlayerMePreset', 'vrmPreset', 'identityPreset', 'suggestBoneMap',
     ];

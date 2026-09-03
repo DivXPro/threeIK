@@ -1,7 +1,9 @@
-import * as THREE from 'three';
-import { Modifier, type SkeletonRig } from 'threeik';
+import { Object3D, Vector3 } from 'three';
+import type { SkeletonRig } from '../core/skeleton-rig';
+import { ThreeIKError } from '../core/errors';
+import { Modifier } from './modifier';
 
-const _world = new THREE.Vector3();
+const _world = new Vector3();
 
 /** 根骨位移 modifier：把 rig 根骨（髋）的姿势位置钉到 target 的世界位置。
  *  骨架编辑里移动重心用——两腿 IK 的脚 target 钉地时，髋部下移即成下蹲。
@@ -9,7 +11,7 @@ const _world = new THREE.Vector3();
 export class RootMotionModifier extends Modifier {
   private bone = -1;
 
-  constructor(private readonly boneName: string, private readonly target: THREE.Object3D) {
+  constructor(private readonly boneName: string, private readonly target: Object3D) {
     super();
   }
 
@@ -17,7 +19,7 @@ export class RootMotionModifier extends Modifier {
     super.attach(rig);
     this.bone = rig.boneIndex(this.boneName);
     if (rig.getParentIndex(this.bone) !== -1) {
-      throw new Error(`RootMotionModifier: "${this.boneName}" 必须是 rig 根骨（位置写的是父对象局部空间）`);
+      throw ThreeIKError.configError(`RootMotionModifier: "${this.boneName}" 必须是 rig 根骨（位置写的是父对象局部空间）`);
     }
   }
 

@@ -1,10 +1,9 @@
 import * as THREE from 'three';
 import GUI from 'lil-gui';
-import { CCDIkModifier, FabrikModifier, TwoBoneIkModifier, type SkeletonRig } from 'threeik';
+import { CCDIkModifier, FabrikModifier, RootMotionModifier, TwoBoneIkModifier } from 'threeik';
 import { loadSoldier, type LoadedCharacter } from './character';
 import { DragTarget } from './drag-target';
 import { measureChain } from './chain-utils';
-import { RootMotionModifier } from './root-motion';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createIkTab(ctx: PlaygroundContext): TabHandle {

@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 
+// 约束计算模块临时量（applyConstraints 在拖拽热路径上，不逐帧分配）
+const _c = new THREE.Vector3(); // 锚点世界位置
+const _off = new THREE.Vector3();
+const _ortho = new THREE.Vector3();
+const _snap = new THREE.Vector3(); // snapIntoConstraints 的命中点（与 _c/_off/_ortho 不别名）
+
 export class DragTarget extends THREE.Object3D {
   readonly ball: THREE.Mesh;
   private dragging = false;
@@ -11,6 +17,15 @@ export class DragTarget extends THREE.Object3D {
   // 防止 target 被拖到链够不着的位置导致视觉脱靶（pole/注视等方向型 target 不要设）
   private reachCenter: THREE.Object3D | null = null;
   private reachRadius = 0;
+  // 方向锥钳制：球被限制在以 anchor 世界位置为顶点、coneDir 为轴、maxAngle 为半角的锥内，
+  // 且与 anchor 的距离收拢到 [coneMinDist, coneMaxDist]——用于方向语义 target（头部注视/膝盖 pole），
+  // 防止拖到脑后（头反拧）或腿后（膝盖反折）；径向距离本不影响求解，收拢它只是让球不飘走
+  private coneAnchor: THREE.Object3D | null = null;
+  private readonly coneDir = new THREE.Vector3();
+  private coneCos = 1;
+  private coneSin = 0;
+  private coneMinDist = 0;
+  private coneMaxDist = Infinity;
   // 拖球期间禁用 OrbitControls（见 scene.ts dragControl），松手/销毁时恢复
   private readonly dragControl?: { lock(): void; unlock(): void };
   private controlLocked = false;
@@ -37,8 +52,6 @@ export class DragTarget extends THREE.Object3D {
     const plane = new THREE.Plane();
     const ndc = new THREE.Vector2();
     const hit = new THREE.Vector3();
-    const reachCenterWorld = new THREE.Vector3();
-    const reachOffset = new THREE.Vector3();
 
     const setNdc = (e: PointerEvent) => {
       const r = dom.getBoundingClientRect();
@@ -65,14 +78,7 @@ export class DragTarget extends THREE.Object3D {
       setNdc(e);
       ray.setFromCamera(ndc, camera);
       if (ray.ray.intersectPlane(plane, hit)) {
-        if (this.reachCenter) {
-          this.reachCenter.getWorldPosition(reachCenterWorld);
-          reachOffset.copy(hit).sub(reachCenterWorld);
-          if (reachOffset.length() > this.reachRadius) {
-            reachOffset.setLength(this.reachRadius);
-            hit.copy(reachCenterWorld).add(reachOffset);
-          }
-        }
+        this.applyConstraints(hit);
         const parent = this.parent;
         if (parent) parent.worldToLocal(hit);
         this.position.copy(hit);
@@ -97,14 +103,59 @@ export class DragTarget extends THREE.Object3D {
   setReachConstraint(center: THREE.Object3D, radius: number): void {
     this.reachCenter = center;
     this.reachRadius = radius;
-    const cw = center.getWorldPosition(new THREE.Vector3());
-    const off = this.getWorldPosition(new THREE.Vector3()).sub(cw);
-    if (off.length() > radius) {
-      off.setLength(radius);
-      const clamped = cw.add(off);
-      if (this.parent) this.parent.worldToLocal(clamped);
-      this.position.copy(clamped);
+    this.snapIntoConstraints();
+  }
+
+  /** 设置方向锥钳制：anchor 世界位置为锥顶，dir 为锥轴（世界方向），maxAngle 为半角（弧度），
+   *  距离收拢到 [minDist, maxDist]。设置时立即收拢当前位置 */
+  setConeConstraint(anchor: THREE.Object3D, dir: THREE.Vector3, maxAngle: number, minDist: number, maxDist: number): void {
+    this.coneAnchor = anchor;
+    this.coneDir.copy(dir).normalize();
+    this.coneCos = Math.cos(maxAngle);
+    this.coneSin = Math.sin(maxAngle);
+    this.coneMinDist = minDist;
+    this.coneMaxDist = maxDist;
+    this.snapIntoConstraints();
+  }
+
+  /** 依次应用可达球与方向锥钳制（就地修改 hit，世界空间） */
+  private applyConstraints(hit: THREE.Vector3): void {
+    if (this.reachCenter) {
+      this.reachCenter.getWorldPosition(_c);
+      _off.copy(hit).sub(_c);
+      if (_off.length() > this.reachRadius) {
+        _off.setLength(this.reachRadius);
+        hit.copy(_c).add(_off);
+      }
     }
+    if (this.coneAnchor) {
+      this.coneAnchor.getWorldPosition(_c);
+      _off.copy(hit).sub(_c);
+      const len = THREE.MathUtils.clamp(_off.length(), this.coneMinDist, this.coneMaxDist);
+      if (_off.lengthSq() < 1e-10) _off.copy(this.coneDir); // 零距离时方向退化，用锥轴兜底
+      _off.normalize();
+      const d = _off.dot(this.coneDir);
+      if (d < this.coneCos) {
+        // 出锥：在 dir 与 off 张成的平面内，取与 dir 夹角恰好 maxAngle 的方向
+        _ortho.copy(_off).addScaledVector(this.coneDir, -d);
+        if (_ortho.lengthSq() < 1e-10) {
+          // off 与锥轴反向：任取垂直方向
+          _ortho.set(0, 1, 0).cross(this.coneDir);
+          if (_ortho.lengthSq() < 1e-10) _ortho.set(1, 0, 0).cross(this.coneDir);
+        }
+        _ortho.normalize();
+        _off.copy(this.coneDir).multiplyScalar(this.coneCos).addScaledVector(_ortho, this.coneSin);
+      }
+      hit.copy(_c).addScaledVector(_off, len);
+    }
+  }
+
+  /** 设置约束时立即把当前位置收拢进约束域（初始位置不经过拖拽路径） */
+  private snapIntoConstraints(): void {
+    this.getWorldPosition(_snap);
+    this.applyConstraints(_snap);
+    if (this.parent) this.parent.worldToLocal(_snap);
+    this.position.copy(_snap);
   }
 
   dispose(): void {
@@ -112,6 +163,7 @@ export class DragTarget extends THREE.Object3D {
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
     this.reachCenter = null;
+    this.coneAnchor = null;
     this.releaseControl();
   }
 

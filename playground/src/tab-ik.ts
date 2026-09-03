@@ -69,7 +69,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       rig.addModifier(fabrik);
       rig.addModifier(headMod);
 
-      // 位置型 target 硬钳制在链可达半径内（pole/头部注视是方向语义，不钳）
+      // 位置型 target 硬钳制在链可达半径内
       for (const [target, rootName, endName] of [
         [leftHand, 'mixamorigLeftArm', 'mixamorigLeftHand'],
         [rightHand, 'mixamorigRightArm', 'mixamorigRightHand'],
@@ -80,6 +80,23 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         const m = measureChain(character.root, rootName, endName);
         if (m) target.setReachConstraint(m.rootBone, m.reach);
       }
+
+      // 方向型 target（头部注视/膝盖 pole）做方向锥钳制：锥轴 = 角色朝向（模型局部前方 -Z，
+      // 经 root 转到世界），防止拖到脑后（头反拧）或腿后（膝盖反折）；距离收拢只是防止球飘走
+      const facing = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(character.root.getWorldQuaternion(new THREE.Quaternion()));
+      head.setConeConstraint(
+        character.root.getObjectByName('mixamorigNeck')!,
+        facing, THREE.MathUtils.degToRad(105), 0.35, 2.5,
+      );
+      leftKneePole.setConeConstraint(
+        character.root.getObjectByName('mixamorigLeftLeg')!,
+        facing, THREE.MathUtils.degToRad(100), 0.3, 1.1,
+      );
+      rightKneePole.setConeConstraint(
+        character.root.getObjectByName('mixamorigRightLeg')!,
+        facing, THREE.MathUtils.degToRad(100), 0.3, 1.1,
+      );
 
       const _gp = new THREE.Vector3();
       const _gk = new THREE.Vector3();

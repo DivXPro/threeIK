@@ -31,6 +31,19 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       targets = [leftHand, rightHand, leftFoot, rightFoot, spine, head, leftKneePole, rightKneePole];
       for (const t of targets) ctx.scene.add(t);
 
+      // pole → 膝盖引导线：pole 只控制膝盖绕「髋→踝」轴的朝向（不移动脚），拉线让作用关系可见
+      const guideMat = new THREE.LineBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.45, depthTest: false });
+      const poleGuides = ([[leftKneePole, 'mixamorigLeftLeg'], [rightKneePole, 'mixamorigRightLeg']] as const)
+        .map(([pole, kneeName]) => {
+          const knee = character!.root.getObjectByName(kneeName)!;
+          const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+          const line = new THREE.Line(geo, guideMat);
+          line.renderOrder = 998;
+          line.frustumCulled = false;
+          ctx.scene.add(line);
+          return { line, pole, knee };
+        });
+
       // angularDeltaLimit=π（等效关闭，同 Godot 官方 IK demo）：我们的 update 每帧从 base 姿势重新播种
       // （等价 Godot deterministic 模式），保留默认 2°/迭代会把每帧关节转角预算卡死在 20°——
       // 从 T-pose 指向体前目标需要肩部转 90°+ 且不跨帧累积，手会永远停在半路
@@ -68,7 +81,19 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         if (m) target.setReachConstraint(m.rootBone, m.reach);
       }
 
-      const frameCb = () => { rig.update(1 / 60); }; // 无动画路径：base = rest，直接 update
+      const _gp = new THREE.Vector3();
+      const _gk = new THREE.Vector3();
+      const frameCb = () => {
+        rig.update(1 / 60); // 无动画路径：base = rest，直接 update
+        for (const g of poleGuides) {
+          g.pole.getWorldPosition(_gp);
+          g.knee.getWorldPosition(_gk); // rig.update 已写回骨骼 TRS，getWorldPosition 现算链路
+          const pos = g.line.geometry.getAttribute('position') as THREE.BufferAttribute;
+          pos.setXYZ(0, _gk.x, _gk.y, _gk.z);
+          pos.setXYZ(1, _gp.x, _gp.y, _gp.z);
+          pos.needsUpdate = true;
+        }
+      };
       unsubFrame = ctx.onFrame(frameCb);
 
       gui = new GUI({ title: 'IK' });
@@ -96,6 +121,11 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         ctx.scene.remove(character.root);
         ctx.scene.remove(character.helper);
       }
+      for (const g of poleGuides) {
+        ctx.scene.remove(g.line);
+        g.line.geometry.dispose();
+      }
+      guideMat.dispose();
       for (const t of targets) {
         ctx.scene.remove(t);
         t.dispose();

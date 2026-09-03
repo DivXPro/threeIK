@@ -23,7 +23,11 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
       targets = [handTarget];
       ctx.scene.add(handTarget);
       const armChain = measureChain(character.root, 'mixamorigRightArm', 'mixamorigRightHand');
-      if (armChain) handTarget.setReachConstraint(armChain.rootBone, armChain.reach);
+      const clampParams = { reachScale: 1 };
+      const applyReach = () => {
+        if (armChain) handTarget.setReachConstraint(armChain.rootBone, armChain.reach * clampParams.reachScale);
+      };
+      applyReach();
 
       // angularDeltaLimit=π：base 每帧被动画重播种，2° 默认值会让手追不上偏离 base 太远的 target
       const fabrik = new FabrikModifier(
@@ -51,7 +55,13 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
       f.add(fabrik, 'active').name('启用');
       f.add(fabrik, 'influence', 0, 1, 0.01).name('influence');
       f.add(fabrik, 'maxIterations', 1, 30, 1).name('迭代次数');
-      f.add(fabrik, 'angularDeltaLimit', 0, Math.PI, 0.005).name('角度钳制(rad)');
+      f.add(fabrik, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
+      const fClamp = gui.addFolder('钳制（拖球范围）');
+      fClamp.add(clampParams, 'reachScale', 0.3, 1.5, 0.01).name('半径倍率').onChange(applyReach);
+      if (armChain) {
+        const info = { reach: +armChain.reach.toFixed(3) };
+        fClamp.add(info, 'reach').name('臂链长(m,实测)').disable();
+      }
     },
     unmount() {
       gui?.destroy();

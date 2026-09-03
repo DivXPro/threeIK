@@ -30,9 +30,13 @@ export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {
       targets = [aimTarget, leftHandTarget];
       for (const t of targets) ctx.scene.add(t);
 
-      // 左手球钳制在左臂可达半径内（Aim 目标球是方向语义，不钳）
+      // 左手球钳制在左臂可达半径内（Aim 目标球是 360° 追踪演示，刻意不钳）
       const armChain = measureChain(character.root, 'mixamorigLeftArm', 'mixamorigLeftHand');
-      if (armChain) leftHandTarget.setReachConstraint(armChain.rootBone, armChain.reach);
+      const clampParams = { reachScale: 1 };
+      const applyReach = () => {
+        if (armChain) leftHandTarget.setReachConstraint(armChain.rootBone, armChain.reach * clampParams.reachScale);
+      };
+      applyReach();
 
       const aimConfig: AimConfig = {
         applyBone: 'mixamorigHead',
@@ -86,7 +90,13 @@ export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {
       fCcd.add(ccd, 'active').name('启用');
       fCcd.add(ccd, 'influence', 0, 1, 0.01).name('influence');
       fCcd.add(ccd, 'maxIterations', 1, 30, 1).name('迭代次数');
-      fCcd.add(ccd, 'angularDeltaLimit', 0, Math.PI, 0.005).name('角度钳制(rad)');
+      fCcd.add(ccd, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
+      const fClamp = gui.addFolder('钳制（拖球范围）');
+      fClamp.add(clampParams, 'reachScale', 0.3, 1.5, 0.01).name('半径倍率').onChange(applyReach);
+      if (armChain) {
+        const info = { reach: +armChain.reach.toFixed(3) };
+        fClamp.add(info, 'reach').name('臂链长(m,实测)').disable();
+      }
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

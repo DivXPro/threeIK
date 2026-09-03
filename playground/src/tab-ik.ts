@@ -70,6 +70,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       rig.addModifier(headMod);
 
       // 位置型 target 硬钳制在链可达半径内
+      const reachEntries: { target: DragTarget; rootBone: THREE.Object3D; reach: number }[] = [];
       for (const [target, rootName, endName] of [
         [leftHand, 'mixamorigLeftArm', 'mixamorigLeftHand'],
         [rightHand, 'mixamorigRightArm', 'mixamorigRightHand'],
@@ -78,25 +79,37 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         [spine, 'mixamorigSpine', 'mixamorigNeck'],
       ] as const) {
         const m = measureChain(character.root, rootName, endName);
-        if (m) target.setReachConstraint(m.rootBone, m.reach);
+        if (m) reachEntries.push({ target, rootBone: m.rootBone, reach: m.reach });
       }
 
       // 方向型 target（头部注视/膝盖 pole）做方向锥钳制：锥轴 = 角色朝向（模型局部前方 -Z，
       // 经 root 转到世界），防止拖到脑后（头反拧）或腿后（膝盖反折）；距离收拢只是防止球飘走
       const facing = new THREE.Vector3(0, 0, -1)
         .applyQuaternion(character.root.getWorldQuaternion(new THREE.Quaternion()));
-      head.setConeConstraint(
-        character.root.getObjectByName('mixamorigNeck')!,
-        facing, THREE.MathUtils.degToRad(105), 0.35, 2.5,
-      );
-      leftKneePole.setConeConstraint(
-        character.root.getObjectByName('mixamorigLeftLeg')!,
-        facing, THREE.MathUtils.degToRad(100), 0.3, 1.1,
-      );
-      rightKneePole.setConeConstraint(
-        character.root.getObjectByName('mixamorigRightLeg')!,
-        facing, THREE.MathUtils.degToRad(100), 0.3, 1.1,
-      );
+      const neckBone = character.root.getObjectByName('mixamorigNeck')!;
+      const leftKneeBone = character.root.getObjectByName('mixamorigLeftLeg')!;
+      const rightKneeBone = character.root.getObjectByName('mixamorigRightLeg')!;
+
+      // 钳制参数（GUI 可调；setter 自带收拢，改完立即生效）
+      const clampParams = {
+        reachScale: 1,
+        headAngleDeg: 105, headMinDist: 0.35, headMaxDist: 2.5,
+        poleAngleDeg: 100, poleMinDist: 0.3, poleMaxDist: 1.1,
+      };
+      const applyReach = () => {
+        for (const e of reachEntries) e.target.setReachConstraint(e.rootBone, e.reach * clampParams.reachScale);
+      };
+      const applyHeadCone = () => {
+        head.setConeConstraint(neckBone, facing, THREE.MathUtils.degToRad(clampParams.headAngleDeg), clampParams.headMinDist, clampParams.headMaxDist);
+      };
+      const applyPoleCone = () => {
+        for (const [pole, knee] of [[leftKneePole, leftKneeBone], [rightKneePole, rightKneeBone]] as const) {
+          pole.setConeConstraint(knee, facing, THREE.MathUtils.degToRad(clampParams.poleAngleDeg), clampParams.poleMinDist, clampParams.poleMaxDist);
+        }
+      };
+      applyReach();
+      applyHeadCone();
+      applyPoleCone();
 
       const _gp = new THREE.Vector3();
       const _gk = new THREE.Vector3();
@@ -124,9 +137,28 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         f.add(mod, 'influence', 0, 1, 0.01).name('influence');
         if ('maxIterations' in mod) {
           f.add(mod as CCDIkModifier, 'maxIterations', 1, 30, 1).name('迭代次数');
-          f.add((mod as CCDIkModifier), 'angularDeltaLimit', 0, Math.PI, 0.005).name('角度钳制(rad)');
+          f.add((mod as CCDIkModifier), 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
         }
       }
+      // 球的范围钳制参数（区别于求解器的"求解角步长"）
+      const fClamp = gui.addFolder('钳制（拖球范围）');
+      fClamp.add(clampParams, 'reachScale', 0.3, 1.5, 0.01).name('位置球半径倍率').onChange(applyReach);
+      const reachInfo = {
+        臂: reachEntries[0] ? +reachEntries[0].reach.toFixed(3) : 0,
+        腿: reachEntries[2] ? +reachEntries[2].reach.toFixed(3) : 0,
+        脊柱: reachEntries[4] ? +reachEntries[4].reach.toFixed(3) : 0,
+      };
+      fClamp.add(reachInfo, '臂').name('臂链长(m,实测)').disable();
+      fClamp.add(reachInfo, '腿').name('腿链长(m,实测)').disable();
+      fClamp.add(reachInfo, '脊柱').name('脊柱链长(m,实测)').disable();
+      const fHead = fClamp.addFolder('头部注视锥');
+      fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
+      fHead.add(clampParams, 'headMinDist', 0.1, 1.5, 0.05).name('最近(m)').onChange(applyHeadCone);
+      fHead.add(clampParams, 'headMaxDist', 0.5, 5, 0.1).name('最远(m)').onChange(applyHeadCone);
+      const fPole = fClamp.addFolder('膝盖 pole 锥');
+      fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyPoleCone);
+      fPole.add(clampParams, 'poleMinDist', 0.1, 1, 0.05).name('最近(m)').onChange(applyPoleCone);
+      fPole.add(clampParams, 'poleMaxDist', 0.3, 2, 0.05).name('最远(m)').onChange(applyPoleCone);
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

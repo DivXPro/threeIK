@@ -100,16 +100,16 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       rig.update(0);
 
       // 位置型 target 硬钳制在链可达半径内
-      const reachEntries: { target: DragTarget; rootBone: THREE.Object3D; reach: number }[] = [];
-      for (const [target, rootName, endName] of [
-        [leftHand, 'mixamorigLeftArm', 'mixamorigLeftHand'],
-        [rightHand, 'mixamorigRightArm', 'mixamorigRightHand'],
-        [leftFoot, 'mixamorigLeftUpLeg', 'mixamorigLeftFoot'],
-        [rightFoot, 'mixamorigRightUpLeg', 'mixamorigRightFoot'],
-        [spine, 'mixamorigSpine', 'mixamorigNeck'],
+      const reachEntries: { target: DragTarget; rootBone: THREE.Object3D; reach: number; poleChain: boolean }[] = [];
+      for (const [target, rootName, endName, poleChain] of [
+        [leftHand, 'mixamorigLeftArm', 'mixamorigLeftHand', true],
+        [rightHand, 'mixamorigRightArm', 'mixamorigRightHand', true],
+        [leftFoot, 'mixamorigLeftUpLeg', 'mixamorigLeftFoot', true],
+        [rightFoot, 'mixamorigRightUpLeg', 'mixamorigRightFoot', true],
+        [spine, 'mixamorigSpine', 'mixamorigNeck', false],
       ] as const) {
         const m = measureChain(character.root, rootName, endName);
-        if (m) reachEntries.push({ target, rootBone: m.rootBone, reach: m.reach });
+        if (m) reachEntries.push({ target, rootBone: m.rootBone, reach: m.reach, poleChain });
       }
 
       // 方向型 target（头部注视/pole）做方向锥钳制：锥轴 = 角色朝向（模型局部前方 -Z，
@@ -134,12 +134,20 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       // 头/pole = 半径球（贴身，防飘远）+ 方向锥（只管角度，防反拧/反折）双重钳制
       const clampParams = {
         reachScale: 1,
+        // 带 pole 的双骨链（四肢）的伸展上限：完全伸直时肘/膝的可行解集从「两球交线圆」
+        // 退化成相切点，pole 失去选择自由——几何固有（h=√(L1²−a²)→0），非实现缺陷。
+        // 96% 处仍留 ~6cm 的肘部回旋空间，pole 永远活着，肉眼读作"伸直"；
+        // 滑到 1.0 可亲手体验退化点
+        poleKeepAlive: 0.96,
         hipsRadius: 0.4,
         headRadius: 0.6, headAngleDeg: 105,
         poleRadius: 0.5, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
       };
       const applyReach = () => {
-        for (const e of reachEntries) e.target.setReachConstraint(e.rootBone, e.reach * clampParams.reachScale);
+        for (const e of reachEntries) {
+          const r = e.reach * (e.poleChain ? Math.min(clampParams.reachScale, clampParams.poleKeepAlive) : clampParams.reachScale);
+          e.target.setReachConstraint(e.rootBone, r);
+        }
       };
       const applyHips = () => hips.setReachConstraint(hipsAnchorObj, clampParams.hipsRadius);
       const applyHeadCone = () => {
@@ -211,6 +219,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       // 球的范围钳制参数（区别于求解器的"求解角步长"）
       const fClamp = gui.addFolder('钳制（拖球范围）');
       fClamp.add(clampParams, 'reachScale', 0.3, 1.5, 0.01).name('位置球半径倍率').onChange(applyReach);
+      fClamp.add(clampParams, 'poleKeepAlive', 0.85, 1, 0.005).name('四肢伸展上限(pole保活)').onChange(applyReach);
       fClamp.add(clampParams, 'hipsRadius', 0.1, 0.8, 0.01).name('髋部活动半径(m)').onChange(applyHips);
       const reachInfo = {
         臂: reachEntries[0] ? +reachEntries[0].reach.toFixed(3) : 0,

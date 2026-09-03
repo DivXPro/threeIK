@@ -46,7 +46,7 @@ export class DragTarget extends THREE.Object3D {
     this.dragControl = dragControl;
     this.position.copy(initial);
     this.ball = new THREE.Mesh(
-      new THREE.SphereGeometry(0.045, 20, 14),
+      new THREE.SphereGeometry(0.0225, 20, 14),
       new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }),
     );
     this.ball.renderOrder = 999;

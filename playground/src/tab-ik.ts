@@ -25,16 +25,19 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
 
       // 可拖拽 target：髋（重心）、双手、双脚、脊柱（弯腰）、头部（注视）；双膝双肘各一个 pole
       const hips = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.06, 0), 0xff3399, ctx.dragControl);
-      const leftHand = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.55, 1.4, 0.25), 0xff5533, ctx.dragControl);
-      const rightHand = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.55, 1.4, 0.25), 0x33ff77, ctx.dragControl);
+      // 手球初始位置须在臂可达范围内部（距肩 ~70% 链长）：贴在球面上手臂完全伸直时
+      // 肘落在肩→腕轴上，pole 绕轴旋转在几何上是零效应，肘 pole 会"拖了没反应"
+      const leftHand = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.35, 1.33, 0.32), 0xff5533, ctx.dragControl);
+      const rightHand = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.35, 1.33, 0.32), 0x33ff77, ctx.dragControl);
       const leftFoot = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.25, 0.3, 0.4), 0x3388ff, ctx.dragControl);
       const rightFoot = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.25, 0.3, 0.4), 0x22dddd, ctx.dragControl);
       const spine = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.25, 0.3), 0xcc66ff, ctx.dragControl);
       const head = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0, 1.7, 0.9), 0xffffff, ctx.dragControl);
       const leftKneePole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.25, 0.9, 1.2), 0xffcc00, ctx.dragControl);
       const rightKneePole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.25, 0.9, 1.2), 0xff9933, ctx.dragControl);
-      const leftElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.45, 1.3, 0.8), 0xccff66, ctx.dragControl);
-      const rightElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.45, 1.3, 0.8), 0x66ffcc, ctx.dragControl);
+      // 肘 pole 在肘的后下方：肘的自然朝向是后下（膝朝前），pole 放前面会把手臂掰成肘朝上的托盘姿势
+      const leftElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(0.4, 1.0, -0.35), 0xccff66, ctx.dragControl);
+      const rightElbowPole = new DragTarget(ctx.camera, ctx.renderer.domElement, new THREE.Vector3(-0.4, 1.0, -0.35), 0x66ffcc, ctx.dragControl);
       targets = [hips, leftHand, rightHand, leftFoot, rightFoot, spine, head, leftKneePole, rightKneePole, leftElbowPole, rightElbowPole];
       for (const t of targets) ctx.scene.add(t);
 
@@ -104,9 +107,11 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       }
 
       // 方向型 target（头部注视/pole）做方向锥钳制：锥轴 = 角色朝向（模型局部前方 -Z，
-      // 经 root 转到世界），防止拖到脑后（头反拧）或关节后方（膝/肘反折）；距离收拢只是防止球飘走
+      // 经 root 转到世界），防止拖到脑后（头反拧）或关节后方（膝反折）；距离收拢只是防止球飘走。
+      // 肘 pole 例外：肘的自然朝向是后下，锥轴取背后方向（放前面会把手臂掰成肘朝上的姿势）
       const facing = new THREE.Vector3(0, 0, -1)
         .applyQuaternion(character.root.getWorldQuaternion(new THREE.Quaternion()));
+      const backward = facing.clone().negate();
       const neckBone = character.root.getObjectByName('mixamorigNeck')!;
       const leftKneeBone = character.root.getObjectByName('mixamorigLeftLeg')!;
       const rightKneeBone = character.root.getObjectByName('mixamorigRightLeg')!;
@@ -136,12 +141,12 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         head.setConeConstraint(neckBone, facing, THREE.MathUtils.degToRad(clampParams.headAngleDeg), 0, Infinity);
       };
       const applyPoleCone = () => {
-        for (const [pole, joint] of [
-          [leftKneePole, leftKneeBone], [rightKneePole, rightKneeBone],
-          [leftElbowPole, leftElbowBone], [rightElbowPole, rightElbowBone],
+        for (const [pole, joint, axis] of [
+          [leftKneePole, leftKneeBone, facing], [rightKneePole, rightKneeBone, facing],
+          [leftElbowPole, leftElbowBone, backward], [rightElbowPole, rightElbowBone, backward],
         ] as const) {
           pole.setReachConstraint(joint, clampParams.poleRadius);
-          pole.setConeConstraint(joint, facing, THREE.MathUtils.degToRad(clampParams.poleAngleDeg), 0, Infinity);
+          pole.setConeConstraint(joint, axis, THREE.MathUtils.degToRad(clampParams.poleAngleDeg), 0, Infinity);
         }
       };
       applyReach();

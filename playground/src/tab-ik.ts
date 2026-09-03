@@ -113,7 +113,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       }
 
       // 方向型 target（头部注视/pole）做方向锥钳制：锥轴 = 角色朝向（模型局部前方 -Z，
-      // 经 root 转到世界），防止拖到脑后（头反拧）或关节后方（膝反折）；距离收拢只是防止球飘走。
+      // 经 root 转到世界），防止拖到脑后（头反拧）或关节后方（膝反折）；径向距离对求解
+      // 毫无影响，锁死在固定半径上（min=max）——球恒距关节 R，拖拽只在球面上换方向。
       // 肘 pole 例外：肘的自然朝向是后下，锥轴取背后方向（放前面会把手臂掰成肘朝上的姿势）
       const facing = new THREE.Vector3(0, 0, -1)
         .applyQuaternion(character.root.getWorldQuaternion(new THREE.Quaternion()));
@@ -131,7 +132,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       ctx.scene.add(hipsAnchorObj);
 
       // 钳制参数（GUI 可调；setter 自带收拢，改完立即生效）。
-      // 头/pole = 半径球（贴身，防飘远）+ 方向锥（只管角度，防反拧/反折）双重钳制
+      // 头/pole = 方向锥角度（防反拧/反折）+ 固定半径（锥 min=max=R，球恒贴关节不飘远）
       const clampParams = {
         reachScale: 1,
         // 带 pole 的双骨链（四肢）的伸展上限：完全伸直时肘/膝的可行解集从「两球交线圆」
@@ -140,8 +141,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         // 滑到 1.0 可亲手体验退化点
         poleKeepAlive: 0.96,
         hipsRadius: 0.4,
-        headRadius: 0.6, headAngleDeg: 105,
-        poleRadius: 0.5, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
+        headRadius: 0.35, headAngleDeg: 105,
+        poleRadius: 0.28, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
       };
       const applyReach = () => {
         for (const e of reachEntries) {
@@ -151,8 +152,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       };
       const applyHips = () => hips.setReachConstraint(hipsAnchorObj, clampParams.hipsRadius);
       const applyHeadCone = () => {
-        head.setReachConstraint(neckBone, clampParams.headRadius);
-        head.setConeConstraint(neckBone, facing, THREE.MathUtils.degToRad(clampParams.headAngleDeg), 0, Infinity);
+        // 注视是纯方向语义：半径锁死（min=max），球恒在颈前 R 处的球面上，拖拽只换朝向
+        head.setConeConstraint(neckBone, facing, THREE.MathUtils.degToRad(clampParams.headAngleDeg), clampParams.headRadius, clampParams.headRadius);
       };
       const applyPoleCone = () => {
         for (const [pole, joint, axis, deg] of [
@@ -162,8 +163,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           [leftElbowPole, leftElbowBone, backward, clampParams.elbowPoleAngleDeg],
           [rightElbowPole, rightElbowBone, backward, clampParams.elbowPoleAngleDeg],
         ] as const) {
-          pole.setReachConstraint(joint, clampParams.poleRadius);
-          pole.setConeConstraint(joint, axis, THREE.MathUtils.degToRad(deg), 0, Infinity);
+          // pole 同理：半径锁死，球恒贴关节 R 处（径向距离本就不影响 pole 求解）
+          pole.setConeConstraint(joint, axis, THREE.MathUtils.degToRad(deg), clampParams.poleRadius, clampParams.poleRadius);
         }
       };
       applyReach();
@@ -293,10 +294,12 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fClamp.add(reachInfo, '腿').name('腿链长(m,实测)').disable();
       fClamp.add(reachInfo, '脊柱').name('脊柱链长(m,实测)').disable();
       const fHead = fClamp.addFolder('头部注视球');
-      fHead.add(clampParams, 'headRadius', 0.2, 1.5, 0.05).name('半径(m)').onChange(applyHeadCone);
+      // 半径下限 0.3：CCD 端骨（Head 原点）离颈 ~0.12m，球太近会进入可达域，
+      // 求解从"纯注视瞄准"退化成"摆放端骨"，头会拧去够球
+      fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('半径(m)').onChange(applyHeadCone);
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
       const fPole = fClamp.addFolder('膝/肘 pole 球');
-      fPole.add(clampParams, 'poleRadius', 0.15, 1, 0.05).name('半径(m)').onChange(applyPoleCone);
+      fPole.add(clampParams, 'poleRadius', 0.15, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
       fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
       fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
       gui.add(params, 'steerFallback').name('pole 伸展舵控(拉直兜底)');

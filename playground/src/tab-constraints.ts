@@ -8,8 +8,8 @@ import {
   type CopyTransformConfig,
 } from 'threeik';
 import { loadSoldier, type LoadedCharacter } from './character';
-import { DragTarget } from './drag-target';
-import { measureChain } from './chain-utils';
+import { DragTarget } from 'threeik/controls';
+import { measureChain } from 'threeik/controls';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {

@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { FabrikModifier } from 'threeik';
 import { loadSoldier, type LoadedCharacter } from './character';
-import { DragTarget } from './drag-target';
-import { measureChain } from './chain-utils';
+import { DragTarget } from 'threeik/controls';
+import { measureChain } from 'threeik/controls';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {

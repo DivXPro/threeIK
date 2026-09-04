@@ -170,8 +170,10 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
       fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
       fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
-      // B：伸展兜底舵控（HIK FK fallthrough 的拖球等价物）：pole 拖拽中且链伸展率 >0.985 时，
-      // pole 帧间位移 1:1 转交端球。默认 96% 伸展上限下不会触发；把「四肢伸展上限」滑到 1.0 可体验
+      // B：伸展兜底舵控（拉直时的弯曲出口）：pole 拖拽中且链已顶到当前允许的最直时进入舵控——
+      // pole 球离开恒距球面自由飞，其到「肩→手球」连线的垂直距离直接映射为弯曲量：
+      // 拖离线远 → 弯（往哪边拖往哪边弯）；拖回线上 → 伸直（可逆）；绕线转 → 纯 swivel；
+      // 松手球吸回球面、恢复纯转本职。默认 96% 伸展上限下拖直即可触发
       gui.add(params, 'steerFallback').name('pole 伸展舵控(拉直兜底)')
         .onChange((v: boolean) => { for (const l of limbs) l.setSteer(v); });
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');

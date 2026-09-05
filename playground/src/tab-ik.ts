@@ -66,7 +66,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
             color: 0xff5533, position: [0.35, 1.33, 0.32],
             endRotation: true, // 手腕翻向
-            // 肘 pole：球沿环滑（环面 ⊥ 肩→腕链轴），初始方向提示摆肘的后下方（≈自然垂臂的弯曲方向）
+            // 肘 pole：球以定长绕「肩→腕」链轴转（轨道球），初始方向提示摆肘的后下方（≈自然垂臂的弯曲方向）
             pole: { color: 0xccff66, position: [0.38, 0.98, 0.2] },
           },
           {
@@ -177,8 +177,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       // 求解从"纯注视瞄准"退化成"摆放端骨"，头会拧去够球
       fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('半径(m)').onChange(applyHeadCone);
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
-      const fPole = fClamp.addFolder('膝/肘 pole（环上带球）');
-      fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('环半径(m)').onChange(applyPoleRadius);
+      const fPole = fClamp.addFolder('膝/肘 pole 球');
+      fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('轨道半径(m)').onChange(applyPoleRadius);
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

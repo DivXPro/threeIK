@@ -174,7 +174,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 环上带球·拖球沿环滑调肘朝向——端球不动、弯度不变、膝绕轴转向 pole', () => {
+  it('pole 轨道球·拖球沿环滑调肘朝向——端球不动、弯度不变、膝绕轴转向 pole', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -213,7 +213,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 环上带球·rotate 模式：pole 是纯位置控制点不收起，拖球照常沿环调肘朝向（端球不动）', () => {
+  it('pole 轨道球·rotate 模式：pole 是纯位置控制点不收起，拖球照常沿环调肘朝向（端球不动）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -252,7 +252,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 环上带球·离环拖动被吸回环面：球恒在环上（距环心=半径、轴向分量≈0）', () => {
+  it('pole 轨道球·离环拖动被吸回环面：球恒在环上（距环心=半径、轴向分量≈0）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -362,7 +362,7 @@ describe('createSkeletonControls', () => {
     expect(legH.target.isDragging).toBe(true);
     dom.fire('pointerup', {});
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
-    expect(legH.pole.isDragging).toBe(true); // pole 在 move 模式可拖（环上带球，纯位置控制点）
+    expect(legH.pole.isDragging).toBe(true); // pole 在 move 模式可拖（轨道球，纯位置控制点）
     dom.fire('pointerup', {});
     // 点击位置取对角线方向：环心正上/正侧会落进髋球轴箭头的命中区（箭头优先于环的断言对象）
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));

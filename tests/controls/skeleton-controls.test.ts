@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Bone, MathUtils, Object3D, Quaternion, Scene, Vector3 } from 'three';
+import { Bone, Object3D, Quaternion, Scene, Vector3 } from 'three';
 import { SkeletonRig } from '../../src/core/skeleton-rig';
 import { createSkeletonControls, registerControlKind } from '../../src/controls';
 import type { BuiltControl, ControlHandleBase, LimbControlHandle, RootControlHandle } from '../../src/controls';
@@ -208,13 +208,13 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 玛雅化·rotate 模式：pole 球隐藏，拖肘部 swivel 环绕链轴转（端球不动）', () => {
+  it('pole 玛雅化·rotate 模式：pole 是纯位置控制点不收起，拖球照常调肘朝向（端球不动）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
       ],
     });
     scene.updateMatrixWorld(true);
@@ -226,31 +226,26 @@ describe('createSkeletonControls', () => {
     const targetBefore = legH.target.position.clone();
 
     ctl.setManipulatorMode('rotate');
-    expect(legH.pole.ball.visible).toBe(false);
-    expect(legH.poleRings.visible).toBe(true);
+    // 端球藏、端骨环上场；pole 不参战：球仍显示、仍可拖
+    expect(legH.target.ball.visible).toBe(false);
+    expect(legH.rings!.visible).toBe(true);
+    expect(legH.pole.ball.visible).toBe(true);
 
-    // pole 球在 rotate 模式不可拖
     dom.fire('pointerdown', clientFor(camera, legH.pole.getWorldPosition(new Vector3())));
-    expect(legH.pole.isDragging).toBe(false);
-
-    // 拖 swivel 环的 X 环：按下点取 X 圆 30°（避开两环交点——那里两环得分同为零，浮点定胜负），
-    // 拖到 120°：绕 +X 转 +90°；映射为绕链轴（≈-Y）swivel：pole 从 -z 侧转到 +x 侧
-    const R = legH.poleRings.ringRadius;
+    expect(legH.pole.isDragging).toBe(true);
+    // 与 move 模式同一拖法：pole 移到中骨 +x 侧 → 膝转向 +x，端球（弯度唯一来源）不动
     const polePos = legH.pole.getWorldPosition(new Vector3());
-    const ringPoint = (deg: number) => polePos.clone().add(
-      new Vector3(0, R * Math.cos(MathUtils.degToRad(deg)), R * Math.sin(MathUtils.degToRad(deg))));
-    dom.fire('pointerdown', clientFor(camera, ringPoint(30)));
-    expect(legH.poleRings.isDragging).toBe(true);
-    dom.fire('pointermove', clientFor(camera, ringPoint(120)));
+    const midPos0 = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    dom.fire('pointermove', clientFor(camera, polePos.clone().add(midPos0.clone().add(new Vector3(0.2, 0, -0.05)).sub(polePos))));
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
 
-    expect(legH.target.position.distanceTo(targetBefore)).toBeLessThan(1e-6); // swivel 不动端球
+    expect(legH.target.position.distanceTo(targetBefore)).toBeLessThan(1e-6);
     const midPos = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
-    expect(midPos.x).toBeGreaterThan(midBefore.x + 0.02); // 膝随 pole 转到 +x 一侧
+    expect(midPos.x).toBeGreaterThan(midBefore.x + 0.02);
     dom.fire('pointerup', {});
-    expect(legH.poleRings.isDragging).toBe(false);
+    expect(legH.pole.isDragging).toBe(false);
     ctl.dispose();
   });
 
@@ -336,7 +331,7 @@ describe('createSkeletonControls', () => {
     expect(scene.children.filter((c) => c instanceof DragTarget).length).toBe(0);
   });
 
-  it('操纵器模式：双通道控制点球↔环切换（pole 也球↔环），纯位置控制点不参战', () => {
+  it('操纵器模式：双通道控制点球↔环切换，纯位置控制点（含 pole）不参战', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -351,10 +346,9 @@ describe('createSkeletonControls', () => {
     const legH = ctl.get<LimbControlHandle>('leg')!;
     expect(hipsH.rings).toBeDefined();
     expect(legH.rings).toBeDefined();
-    // 默认 move：环（含 pole swivel 环）隐藏且不可命中，球可拖
+    // 默认 move：环隐藏且不可命中，球可拖
     expect(hipsH.rings!.visible).toBe(false);
     expect(legH.rings!.visible).toBe(false);
-    expect(legH.poleRings.visible).toBe(false);
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
     expect(legH.target.isDragging).toBe(true);
     dom.fire('pointerup', {});
@@ -365,20 +359,19 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
 
-    // rotate：球藏、环上（pole 球也藏，换 pole swivel 环上场）
+    // rotate：双通道控制点球藏、环上；pole 是纯位置控制点，不收起、照常可拖
     ctl.setManipulatorMode('rotate');
     expect(hipsH.rings!.visible).toBe(true);
     expect(legH.target.ball.visible).toBe(false);
-    expect(legH.pole.ball.visible).toBe(false);
-    expect(legH.poleRings.visible).toBe(true);
+    expect(legH.pole.ball.visible).toBe(true);
     dom.fire('pointerdown', clientFor(camera, hipsH.target.getWorldPosition(new Vector3())));
     expect(hipsH.target.isDragging).toBe(false);
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0, 0.08, 0))));
     expect(hipsH.rings!.isDragging).toBe(true);
     dom.fire('pointerup', {});
-    // pole swivel 环在 rotate 模式可拖
-    dom.fire('pointerdown', clientFor(camera, legH.poleRings.getWorldPosition(new Vector3()).add(new Vector3(0, 0.08, 0))));
-    expect(legH.poleRings.isDragging).toBe(true);
+    // pole 在 rotate 模式仍可拖（与 chain 等纯位置控制点同待遇）
+    dom.fire('pointerdown', clientFor(camera, legH.pole.getWorldPosition(new Vector3())));
+    expect(legH.pole.isDragging).toBe(true);
     dom.fire('pointerup', {});
     // 纯位置控制点（chain）两种模式都可用
     dom.fire('pointerdown', clientFor(camera, ctl.get('spine')!.target.getWorldPosition(new Vector3())));

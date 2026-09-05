@@ -52,10 +52,8 @@ export interface LimbControlSpec extends ControlSpecBase {
 export interface LimbControlHandle extends ControlHandleBase {
   readonly kind: 'limb';
   readonly modifier: TwoBoneIkModifier;
-  /** pole 拖球（move 模式：箭头+中心球调肘朝向） */
+  /** pole 拖球（纯位置控制点：箭头+中心球调肘朝向，move/rotate 两种模式都常驻可用） */
   readonly pole: DragTarget;
-  /** pole swivel 环（rotate 模式：拖环 = 肘绕「根→端」轴转） */
-  readonly poleRings: RotateRings;
   /** 端骨旋转环（spec.endRotation: true 时存在） */
   readonly rings?: RotateRings;
   /** 实测链可达半径（米，世界空间，未经 keepAlive 收缩） */
@@ -67,10 +65,6 @@ export interface LimbControlHandle extends ControlHandleBase {
   setGuideVisible(visible: boolean): void;
 }
 
-const _sRoot = new Vector3();
-const _sAxis = new Vector3();
-const _sOff = new Vector3();
-const _sMove = new Vector3();
 // A 段（poleDirection 实测）临时量
 const _rootPos = new Vector3();
 const _endPos = new Vector3();
@@ -80,8 +74,8 @@ const _midQ = new Quaternion();
 
 /** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制，弯度由它离根的远近决定——Maya 同款语义）
  *  + pole 转向控制（恒距方向锥，只管肘/膝朝向不管弯度）+ 引导线。
- *  pole 操纵器随模式切换（Maya W/E）：move = 箭头+中心球拖位置调朝向；rotate = 肘部旋转环，
- *  任意环的角增量映射为绕「根→端」链轴的 swivel。内置 roll 修正实测（A）。 */
+ *  pole 是纯位置控制点（Maya 里 pole vector 就是个只有位置通道的普通节点）：
+ *  箭头+中心球，move/rotate 两种模式都常驻可用，不参与球↔环切换。内置 roll 修正实测（A）。 */
 export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec): BuiltControl {
   const rootObj = ctx.bone(spec.rootBone);
   const midObj = ctx.bone(spec.middleBone);
@@ -101,26 +95,6 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   const pole = new DragTarget(ctx.camera, ctx.dom, poleInitial, spec.pole?.color ?? 0xffcc00, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
   pole.setAxisHandles(true); // pole 也是普通移动操纵器（Maya 里 pole vector 就是个走 W 移动工具的普通节点）
   ctx.scene.add(pole);
-
-  // pole swivel 环（rotate 模式上场）：环心跟随 pole 球；拖任意环 = 把 pole 绕「根骨→端球」
-  // 链轴旋转（swivel）。pole 的唯一自由度就是绕链轴转，所以环的角增量按链轴符号对齐后全量映射
-  const onPoleRingDrag = (axisW: Vector3, dAngle: number) => {
-    rootObj.getWorldPosition(_sRoot);
-    _sAxis.subVectors(target.position, _sRoot);
-    if (_sAxis.lengthSq() < 1e-8) return;
-    _sAxis.normalize();
-    const s = Math.sign(axisW.dot(_sAxis)) || 1;
-    pole.getWorldPosition(_sOff).sub(_sRoot);
-    _sOff.applyAxisAngle(_sAxis, dAngle * s);
-    pole.moveTo(_sMove.copy(_sRoot).add(_sOff)); // 过锥钳制：方向进求解，半径收回球面
-  };
-  const poleRings = new RotateRings(ctx.camera, ctx.dom, {
-    ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius,
-    dragControl: ctx.dragControl,
-    onDragDelta: onPoleRingDrag,
-  });
-  poleRings.setJoint(pole); // 环心随球；球不可旋转，环朝向闲时回世界轴对齐
-  ctx.scene.add(poleRings);
 
   const modifier = new TwoBoneIkModifier([{
     rootBone: spec.rootBone, middleBone: spec.middleBone, endBone: spec.endBone,
@@ -154,7 +128,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   const applyPoleCone = () => pole.setConeConstraint(midObj, axis, MathUtils.degToRad(angleDeg), poleRadius, poleRadius);
 
   const handle: LimbControlHandle = {
-    name: spec.name, kind: 'limb', target, pole, poleRings, modifier, rings,
+    name: spec.name, kind: 'limb', target, pole, modifier, rings,
     get reach() { return reach; },
     setActive: (a) => { modifier.active = a; },
     setReachScale: (s) => { reachScale = s; applyReach(); },
@@ -167,8 +141,10 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   return {
     name: spec.name, kind: 'limb',
     targets: [target, pole],
-    moveTargets: [target, pole], // pole 是普通移动操纵器：move 显球+箭头，rotate 藏球换 swivel 环
-    rotateRings: rings ? [poleRings, rings] : [poleRings],
+    // pole 是纯位置控制点（不参与 W/E 切换）：moveTargets 只含端球，rotate 模式端球藏、端骨环上场，
+    // pole 两种模式都常驻可拖
+    moveTargets: [target],
+    rotateRings: rings ? [rings] : undefined,
     modifiers,
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);
@@ -197,10 +173,8 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
         }
       }
       rings?.update(); // 环心/朝向初始同步（首解后姿势）
-      poleRings.update();
     },
     update() {
-      poleRings.update();
       rings?.update();
       guide?.update();
     },
@@ -211,7 +185,6 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       ctx.scene.remove(pole);
       target.dispose();
       pole.dispose();
-      poleRings.dispose();
       rings?.dispose();
     },
   };

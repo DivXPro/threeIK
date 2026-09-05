@@ -41,7 +41,7 @@ const BUILTINS: Record<string, ControlKindFactory> = {
  *     同深度保持声明顺序）
  *  2. 装配时内部先跑一帧 rig.update(0)，钳制锚点/携带偏移/poleDirection 都按求解后姿势捕获
  *  3. limb 的 roll 修正实测（poleDirection:'auto'）是声明开关；pole 是 Maya 式 pole vector——
- *     只管肘/膝朝向不管弯度（弯度由端球离根远近决定），move 模式箭头+中心球、rotate 模式 swivel 环
+ *     只管肘/膝朝向不管弯度（弯度由端球离根远近决定），纯位置控制点（箭头+中心球），不参与 W/E 切换
  *
  * 应用侧每帧：`rig.update(dt)` 之后调 `ctl.update()`（携带 → 环跟随 → 引导线）。
  */

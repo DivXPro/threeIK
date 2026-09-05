@@ -48,7 +48,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
             color: 0x3388ff, position: [0.25, 0.3, 0.4],
             carry: false, // 脚钉地：下蹲演示的基础（锚点 UpLeg 随髋动）
-            steer: true,
             endRotation: true, // ①脚朝向：rotate 模式下脚部旋转环
             pole: { color: 0xffcc00, position: [0.25, 0.9, 1.2] },
           },
@@ -57,7 +56,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigRightUpLeg', middleBone: 'mixamorigRightLeg', endBone: 'mixamorigRightFoot',
             color: 0x22dddd, position: [-0.25, 0.3, 0.4],
             carry: false,
-            steer: true,
             endRotation: true,
             pole: { color: 0xff9933, position: [-0.25, 0.9, 1.2] },
           },
@@ -67,7 +65,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             kind: 'limb', name: 'armL',
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
             color: 0xff5533, position: [0.35, 1.33, 0.32],
-            steer: true,
             endRotation: true, // 手腕翻向
             // 肘 pole 默认在肘的下方偏后（≈肘朝下，自然垂臂的弯曲方向）：锥轴取背后方向，
             // 半角 130° 覆盖垂臂姿势（膝的 100° 会把这些自然姿势挡在锥外）
@@ -77,7 +74,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             kind: 'limb', name: 'armR',
             rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
             color: 0x33ff77, position: [-0.35, 1.33, 0.32],
-            steer: true,
             endRotation: true,
             pole: { color: 0x66ffcc, position: [-0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
           },
@@ -89,7 +85,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
 
       const frameCb = () => {
         rig.update(1 / 60); // 无动画路径：base = rest，直接 update
-        ctl!.update();      // 求解后：携带 → steer 舵控 → 引导线
+        ctl!.update();      // 求解后：携带 → pole 双通道 → 引导线
       };
       unsubFrame = ctx.onFrame(frameCb);
 
@@ -135,7 +131,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           l.setPoleConeAngleDeg(clampParams.elbowPoleAngleDeg);
         }
       };
-      const params = { steerFallback: true, manipulatorMode: 'move' as 'move' | 'rotate' };
+      const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
       // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手）
       const applyMode = (m: 'move' | 'rotate') => {
@@ -191,12 +187,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
       fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
       fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
-      // B：伸展兜底舵控（拉直时的弯曲出口）：pole 拖拽中且链已顶到当前允许的最直时进入舵控——
-      // pole 球离开恒距球面自由飞，其到「肩→手球」连线的垂直距离直接映射为弯曲量：
-      // 拖离线远 → 弯（往哪边拖往哪边弯）；拖回线上 → 伸直（可逆）；绕线转 → 纯 swivel；
-      // 松手球吸回球面、恢复纯转本职。默认 96% 伸展上限下拖直即可触发
-      gui.add(params, 'steerFallback').name('pole 伸展舵控(拉直兜底)')
-        .onChange((v: boolean) => { for (const l of limbs) l.setSteer(v); });
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

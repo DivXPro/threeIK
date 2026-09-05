@@ -174,17 +174,17 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  // 舵控几何常数（迷你腿链 a=b=0.4）：pole 初始在 mid + facing(0,0,-1)×0.2 = (0.1,0.6,-0.2)，
-  // 离轴 h0=0.2；chainSpan(h) = 2·√(0.16−h²)。Δ 映射：h肘 = 锁存时肘高 + (h球 − h球0)，d = span(h肘)
+  // pole 双通道几何常数（迷你腿链 a=b=0.4）：pole 初始在 mid + facing(0,0,-1)×0.2 = (0.1,0.6,-0.2)，
+  // 离轴 h0=0.2；chainSpan(h) = 2·√(0.16−h²)。Δ 映射：h肘 = 起拖时肘高 + (h球 − h球0)，d = span(h肘)
   const span = (h: number) => 2 * Math.sqrt(0.16 - h * h);
 
-  it('steer 舵控：拉直时拖 pole 离轴弯臂、拖回线上伸直（可逆）；关闭则不响应', () => {
+  it('pole 双通道·move 模式：拖肘球调弯曲量（伸直→弯、拖回线上→直，可逆）；切 rotate 模式 bend 即收手', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, steer: true },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false },
       ],
     });
     scene.updateMatrixWorld(true);
@@ -196,11 +196,11 @@ describe('createSkeletonControls', () => {
     scene.updateMatrixWorld(true);
     const rootPos = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
 
-    // 真指针按下 pole 球（舵控以 isDragging 为门）
+    // 真指针按下 pole 球（bend 以 isDragging 为门）
     dom.fire('pointerdown', clientFor(camera, legH.pole.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(true);
     rig.update(0);
-    ctl.update(); // 进入舵控：记录零点（h肘0=0 全直，h球0=0.2），球离面
+    ctl.update(); // 进入 bend：记录零点（h肘0=0 全直，h球0=0.2），球离面
 
     // 拖离轴：pole +0.2x → (0.3,0.6,-0.2)，h球=√0.08；h肘 = 0 + √0.08 − 0.2 ≈ 0.0828，d = span(h肘)
     const distBefore = legH.target.position.distanceTo(rootPos);
@@ -208,11 +208,11 @@ describe('createSkeletonControls', () => {
     rig.update(0);
     ctl.update();
     const dBent = span(Math.sqrt(0.08) - 0.2);
-    expect(distBefore).toBeCloseTo(0.8, 4); // 锁存时全直
+    expect(distBefore).toBeCloseTo(0.8, 4); // 起拖时全直
     expect(legH.target.position.distanceTo(rootPos)).toBeCloseTo(dBent, 4);
     expect(legH.target.position.distanceTo(rootPos)).toBeLessThan(0.8); // 弯了
 
-    // 弯向下中骨倒向 pole 一侧（+x）：steer 在 ctl.update 改写端球，骨骼要等下一帧求解
+    // 弯向下中骨倒向 pole 一侧（+x）：bend 在 ctl.update 改写端球，骨骼要等下一帧求解
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
@@ -225,8 +225,8 @@ describe('createSkeletonControls', () => {
     ctl.update();
     expect(legH.target.position.distanceTo(rootPos)).toBeCloseTo(0.8, 5);
 
-    // 关闭舵控：pole 吸回球面，再拖不再转交
-    legH.setSteer(false);
+    // 拖到一半切 rotate 模式：bend 收手（pole 吸回恒距球面），再拖只剩 swivel，端球不动
+    ctl.setManipulatorMode('rotate');
     const endBefore = legH.target.position.clone();
     legH.pole.moveTo(legH.pole.position.clone().add(new Vector3(0.1, 0, 0)));
     rig.update(0);
@@ -236,43 +236,47 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('steer 舵控：绕轴转 pole 时离轴距离不变，端球不动（纯 swivel 不引起弯度变化）', () => {
+  it('pole 双通道·rotate 模式：拖肘球 = 纯 swivel（端球不动，中骨绕轴转到 pole 一侧）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, steer: true },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false },
       ],
     });
+    ctl.setManipulatorMode('rotate');
     scene.updateMatrixWorld(true);
     const legH = ctl.get<LimbControlHandle>('leg')!;
-    legH.setKeepAlive(1);
-    legH.target.moveTo(new Vector3(0.1, 0.2, 0));
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
-    dom.fire('pointerdown', clientFor(camera, legH.pole.getWorldPosition(new Vector3())));
-    rig.update(0);
-    ctl.update();
-
-    // 绕轴（x=0.1, z=0 的竖线）从 (0.1,0.6,-0.2) 转到 (0.3,0.6,0)：离轴距离都是 0.2
+    // 默认 keepAlive 0.96 下端球收在 0.768，膝微弯朝 pole（-z）；中骨位置先记下
+    const midPosBefore = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
     const endBefore = legH.target.position.clone();
-    legH.pole.moveTo(new Vector3(0.3, 0.6, 0));
+
+    // rotate 模式下锥约束保持生效：在锥内（半角 100°）把 pole 从 -z 侧绕向 +x 侧 60°
+    dom.fire('pointerdown', clientFor(camera, legH.pole.getWorldPosition(new Vector3())));
+    // mid ≈ (0.1, 0.6, 0)，起始偏移 (0,0,-0.2) → 目标偏移 (0.2·sin60°, 0, -0.2·cos60°)
+    legH.pole.moveTo(new Vector3(0.1 + 0.2 * Math.sin(Math.PI / 3), 0.6, -0.2 * Math.cos(Math.PI / 3)));
     rig.update(0);
     ctl.update();
-    expect(legH.target.position.distanceTo(endBefore)).toBeLessThan(1e-6);
+    scene.updateMatrixWorld(true);
+
+    expect(legH.target.position.distanceTo(endBefore)).toBeLessThan(1e-6); // swivel 不动端球
+    const midPos = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    expect(midPos.x).toBeGreaterThan(midPosBefore.x + 0.02); // 膝随 pole 转到 +x 一侧
     dom.fire('pointerup', {});
     ctl.dispose();
   });
 
-  it('默认 keepAlive 下 steer 可触发：端球顶在钳制边界即视为"拉到最直"', () => {
+  it('pole 双通道·move 模式 bend 无伸展门槛：已弯曲姿势下起拖直接调弯度', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, steer: true },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false },
       ],
     });
     scene.updateMatrixWorld(true);
@@ -281,7 +285,7 @@ describe('createSkeletonControls', () => {
     ctl.update();
     scene.updateMatrixWorld(true);
     const rootPos = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
-    const distBefore = legH.target.position.distanceTo(rootPos); // 0.768（钳制边界，= 锁存时的骨距 d0）
+    const distBefore = legH.target.position.distanceTo(rootPos); // 0.768（钳制边界，= 起拖时的骨距 d0）
     dom.fire('pointerdown', clientFor(camera, legH.pole.getWorldPosition(new Vector3())));
     rig.update(0);
     ctl.update();
@@ -293,7 +297,7 @@ describe('createSkeletonControls', () => {
     };
     const h0 = perp(legH.pole.getWorldPosition(new Vector3()));
     // 拖得更离轴：pole → (0.4,0.6,-0.2)。Δ 映射：h肘 = h肘0 + (h球 − h0)，d = span(h肘)；
-    // h肘0 由锁存骨距反推：aProj = d0/2（a=b），h肘0 = √(0.16 − aProj²)；实现侧 h肘 封顶 min(a,b)×0.999
+    // h肘0 由起拖骨距反推：aProj = d0/2（a=b），h肘0 = √(0.16 − aProj²)；实现侧 h肘 封顶 min(a,b)×0.999
     const hMax = 0.4 * 0.999;
     const hElbow0 = Math.sqrt(Math.max(0, 0.16 - (distBefore / 2) ** 2));
     const hElbowOf = (p: Vector3) => MathUtils.clamp(hElbow0 + perp(p) - h0, 0, hMax);
@@ -383,7 +387,8 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
     expect(legH.target.isDragging).toBe(true);
     dom.fire('pointerup', {});
-    dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0, 0.08, 0))));
+    // 点击位置取对角线方向：环心正上/正侧会落进髋球轴箭头的命中区（箭头优先于环的断言对象）
+    dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
 
     // rotate：球藏、环上；limb 的 pole（旋转向）不受切换影响

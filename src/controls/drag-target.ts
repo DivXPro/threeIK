@@ -1,4 +1,4 @@
-import { Camera, MathUtils, Mesh, MeshBasicMaterial, Object3D, Plane, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+import { Camera, CylinderGeometry, ConeGeometry, MathUtils, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
 
 // 约束计算模块临时量（applyConstraints 在拖拽热路径上，不逐帧分配）
 const _c = new Vector3(); // 锚点世界位置
@@ -6,9 +6,21 @@ const _off = new Vector3();
 const _ortho = new Vector3();
 const _snap = new Vector3(); // snapIntoConstraints 的命中点（与 _c/_off/_ortho 不别名）
 const _planeHit = new Vector3(); // moveTo 的拖拽平面命中点
+// 轴箭头拾取/拖拽临时量
+const _ro = new Vector3();
+const _w0 = new Vector3();
+const _axisW = new Vector3();
+const _wq = new Quaternion();
 
 // 拖拽命中间隙：按相机距离换算的世界容差（~26px 屏幕等效），让小球在手机上也能点到
 const HIT_TOLERANCE_PER_METER = 0.011;
+
+// 轴箭头共享资源（模块级单例，不随实例 dispose）：单位箭头沿 +Y，总长约 1，实例按 arrowLen 缩放
+const ARROW_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
+const _shaftGeo = new CylinderGeometry(0.025, 0.025, 0.8, 8).translate(0, 0.4, 0); // 0→0.8
+const _tipGeo = new ConeGeometry(0.07, 0.2, 12).translate(0, 0.9, 0);              // 0.8→1.0
+const _arrowMats = ARROW_COLORS.map((color) => new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }));
+const _AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 
 /** 拖球期间禁用视角控制（OrbitControls）的计数锁接口，由应用侧注入（playground scene.ts 同款） */
 export interface DragControl {
@@ -65,9 +77,19 @@ export class DragTarget extends Object3D {
   // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
   private carryAnchor: Object3D | null = null;
   private readonly carryOffset = new Vector3();
-  // 钳制暂停（limb 舵控期间 pole 球离面自由飞，弯曲量由外部从球位置解算）：
+  // 钳制暂停（limb pole 弯曲解算期间球离恒距球面自由飞，弯曲量由外部从球位置解算）：
   // 暂停时拖拽写入不过约束管线；恢复时立即收拢回约束域并重记携带偏移
   private constraintsSuspended = false;
+  // 轴箭头（Maya Move 样式）：拖箭头 = 沿该世界轴单轴移动；中心球 = 屏幕平面自由拖（默认路径）。
+  // 箭头随球显隐（setVisible），根部 1/4 杆长不响应命中（让给中心球）
+  private arrowsOn = false;
+  private arrowLen = 0;
+  private arrowsGroup: Object3D | null = null;
+  // 轴拖拽状态（按下时冻结锚点与轴；逐事件求射线相对轴线的最近参量，固定锚点防钳制漂移）
+  private axisDragging = false;
+  private readonly dragAxisVec = new Vector3();
+  private readonly dragStartPos = new Vector3();
+  private dragAxisT0 = 0;
 
   constructor(
     camera: Camera,
@@ -93,10 +115,30 @@ export class DragTarget extends Object3D {
     const plane = new Plane();
     const ndc = new Vector2();
     const hit = new Vector3();
+    const pick = { t: 0, dist: 0 };
 
     const setNdc = (e: DragPointerEvent) => {
       const r = dom.getBoundingClientRect();
       ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    };
+    // 射线 vs 轴线的最近参量：t 沿轴（世界单位，可负）、dist 为两线最近距离；
+    // 平行或最近点在射线身后返回 false（写入 pick）
+    const rayAxisClosest = (axis: Vector3, center: Vector3): boolean => {
+      _ro.copy(ray.ray.origin);
+      _w0.copy(_ro).sub(center);
+      const rd = ray.ray.direction;
+      const d = rd.dot(axis);
+      const denom = 1 - d * d;
+      if (denom < 1e-10) return false;
+      const e2 = _w0.dot(rd);
+      const f = _w0.dot(axis);
+      const t = (f - e2 * d) / denom;
+      const s = t * d - e2;
+      if (s < 0) return false;
+      _off.copy(_w0).addScaledVector(rd, s).addScaledVector(axis, -t); // w0 + s·rd − t·axis
+      pick.t = t;
+      pick.dist = _off.length();
+      return true;
     };
     // 监听器保存为字段引用，dispose 可移除（编辑器多视图/页签切换防泄漏）
     this.onPointerDown = (e: DragPointerEvent) => {
@@ -106,6 +148,33 @@ export class DragTarget extends Object3D {
       // 容差命中：raycast 缩小版球体容易脱靶（尤其触屏），按相机距离给射线一个世界余量
       this.ball.getWorldPosition(_c);
       const tolerance = camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER;
+      // 轴箭头优先于中心球命中（根部 1/4 杆长不算——那里是中心球的地盘）
+      if (this.arrowsGroup && this.arrowsGroup.visible) {
+        this.getWorldQuaternion(_wq);
+        let best = -1;
+        let bestDist = Infinity;
+        let bestT = 0;
+        for (let i = 0; i < 3; i++) {
+          _axisW.copy(_AXES[i]!).applyQuaternion(_wq);
+          if (!rayAxisClosest(_axisW, _c)) continue;
+          if (pick.t < this.arrowLen * 0.25 || pick.t > this.arrowLen * 1.15) continue;
+          if (pick.dist > tolerance + this.arrowLen * 0.035) continue;
+          if (pick.dist < bestDist) { best = i; bestDist = pick.dist; bestT = pick.t; }
+        }
+        if (best >= 0) {
+          this.dragging = true;
+          this.axisDragging = true;
+          this.dragAxisVec.copy(_AXES[best]!).applyQuaternion(_wq);
+          this.dragAxisT0 = bestT;
+          this.dragStartPos.copy(this.getWorldPosition(new Vector3()));
+          dom.setPointerCapture(e.pointerId);
+          if (this.dragControl) {
+            this.dragControl.lock();
+            this.controlLocked = true;
+          }
+          return;
+        }
+      }
       if (ray.ray.distanceToPoint(_c) <= this.ballRadius + tolerance) {
         this.dragging = true;
         // 拖拽平面：过当前位置、面向相机
@@ -122,12 +191,21 @@ export class DragTarget extends Object3D {
       if (!this.dragging) return;
       setNdc(e);
       ray.setFromCamera(ndc, camera);
+      if (this.axisDragging) {
+        // 单轴移动：新位置 = 抓取锚点 + 轴 ×（当前参量 − 抓取参量）；锚点固定，钳制不漂移
+        if (rayAxisClosest(this.dragAxisVec, this.dragStartPos)) {
+          hit.copy(this.dragStartPos).addScaledVector(this.dragAxisVec, pick.t - this.dragAxisT0);
+          this.applyDragPoint(hit);
+        }
+        return;
+      }
       if (ray.ray.intersectPlane(plane, hit)) {
         this.applyDragPoint(hit);
       }
     };
     this.onPointerUp = () => {
       this.dragging = false;
+      this.axisDragging = false;
       this.releaseControl();
     };
     dom.addEventListener('pointerdown', this.onPointerDown);
@@ -135,7 +213,7 @@ export class DragTarget extends Object3D {
     dom.addEventListener('pointerup', this.onPointerUp);
   }
 
-  /** 是否正被拖拽（steer 舵控/自动动画目标据此判定） */
+  /** 是否正被拖拽（pole 双通道/自动动画目标据此判定） */
   get isDragging(): boolean {
     return this.dragging;
   }
@@ -145,9 +223,36 @@ export class DragTarget extends Object3D {
     this.interactive = v;
   }
 
-  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中） */
+  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中；轴箭头跟随） */
   setVisible(v: boolean): void {
     this.ball.visible = v;
+    if (this.arrowsGroup) this.arrowsGroup.visible = v && this.arrowsOn;
+  }
+
+  /** 开关轴箭头（Maya Move 样式移动操纵器）：拖箭头 = 沿该世界轴单轴移动。
+   *  len 缺省 = 6 倍球半径；箭头资源模块级共享，重复调用不重复建 */
+  setAxisHandles(on: boolean, len?: number): void {
+    this.arrowsOn = on;
+    if (on && !this.arrowsGroup) {
+      this.arrowLen = len ?? this.ballRadius * 6;
+      const g = new Object3D();
+      for (let i = 0; i < 3; i++) {
+        const arrow = new Object3D();
+        const shaft = new Mesh(_shaftGeo, _arrowMats[i]);
+        const tip = new Mesh(_tipGeo, _arrowMats[i]);
+        shaft.renderOrder = 999;
+        tip.renderOrder = 999;
+        arrow.add(shaft, tip);
+        if (i === 0) arrow.rotation.z = -Math.PI / 2; // 单位箭头 +Y → +X
+        else if (i === 2) arrow.rotation.x = Math.PI / 2; // +Y → +Z
+        g.add(arrow);
+      }
+      g.scale.setScalar(this.arrowLen);
+      g.visible = this.ball.visible;
+      this.arrowsGroup = g;
+      this.add(g);
+    }
+    if (this.arrowsGroup) this.arrowsGroup.visible = on && this.ball.visible;
   }
 
   /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离。
@@ -180,7 +285,7 @@ export class DragTarget extends Object3D {
     this.updateCarryOffset(); // 拖拽即改写相对偏移，松手后按新偏移跟随
   }
 
-  /** 暂停/恢复约束钳制：暂停期间球自由移动（舵控解算用）；恢复时立即收拢回约束域 */
+  /** 暂停/恢复约束钳制：暂停期间球自由移动（pole 弯曲解算用）；恢复时立即收拢回约束域 */
   setConstraintsSuspended(suspended: boolean): void {
     if (this.constraintsSuspended === suspended) return;
     this.constraintsSuspended = suspended;
@@ -253,7 +358,7 @@ export class DragTarget extends Object3D {
     this.applyConstraints(_snap);
     if (this.parent) this.parent.worldToLocal(_snap);
     this.position.copy(_snap);
-    this.updateCarryOffset(); // 收拢改写了位置，携带偏移与实际保持一致（舵控恢复时不跳变）
+    this.updateCarryOffset(); // 收拢改写了位置，携带偏移与实际保持一致（暂停恢复时不跳变）
   }
 
   dispose(): void {
@@ -264,6 +369,7 @@ export class DragTarget extends Object3D {
     this.coneAnchor = null;
     this.carryAnchor = null;
     this.dragging = false; // dispose 中途拖拽：状态一并复位，isDragging 不留陈旧 true
+    this.axisDragging = false;
     this.releaseControl();
   }
 

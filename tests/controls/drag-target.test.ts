@@ -104,4 +104,58 @@ describe('DragTarget', () => {
     dom.fire('pointerdown', { clientX: 400, clientY: 300 });
     expect(t.isDragging).toBe(false);
   });
+
+  // 世界坐标 → 桩屏幕坐标（800×600）
+  function clientFor(camera: ReturnType<typeof makeCamera>, world: Vector3) {
+    const v = world.clone().project(camera);
+    return { clientX: ((v.x + 1) / 2) * 800, clientY: ((-v.y + 1) / 2) * 600, pointerId: 1 };
+  }
+
+  it('轴箭头：拖 X 箭头只沿 X 移动（垂直屏幕位移不产生 y/z 分量）', () => {
+    const camera = makeCamera(); // (0,0,5) 朝 -Z 看原点
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    // 点 X 箭头中点 (0.6,0,0) 的屏幕位置 → 轴拖拽（t0=0.6）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    // 拖到 (1.0,0.5,0) 的屏幕位置：垂直分量被投影掉，只剩 X 位移
+    // （透视下射线相对 X 轴的最近参量略小于 1.0，t 容差放宽；语义由 y/z 精确为零背书）
+    dom.fire('pointermove', clientFor(camera, new Vector3(1.0, 0.5, 0)));
+    expect(t.position.x).toBeCloseTo(0.4, 1);
+    expect(Math.abs(t.position.y)).toBeLessThan(1e-6);
+    expect(Math.abs(t.position.z)).toBeLessThan(1e-6);
+    dom.fire('pointerup', {});
+  });
+
+  it('轴箭头：箭头根部让位中心球；中心球仍走屏幕平面自由拖', () => {
+    const camera = makeCamera();
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    // 点箭头根部 (0.1,0,0)（< 0.25 杆长）：不算轴命中；距球心 0.1 超出球容差 → 不触发
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.1, 0, 0)));
+    expect(t.isDragging).toBe(false);
+    // 点中心球 → 自由拖
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, new Vector3(0.3, 0.4, 0)));
+    expect(t.position.x).toBeCloseTo(0.3, 5);
+    expect(t.position.y).toBeCloseTo(0.4, 5);
+    dom.fire('pointerup', {});
+  });
+
+  it('轴箭头随球显隐（rotate 模式隐藏后不可命中）', () => {
+    const camera = makeCamera();
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    t.setVisible(false);
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(t.isDragging).toBe(false);
+    t.setVisible(true);
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    dom.fire('pointerup', {});
+  });
 });

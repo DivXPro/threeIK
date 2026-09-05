@@ -6,7 +6,7 @@ import { DragTarget } from '../drag-target';
 import { RotateRings } from '../rotate-rings';
 import { PoleGuide } from '../guides';
 import { measureChain } from '../measure-chain';
-import { resolveConeAxis, toVec3, type BuiltControl, type ControlBuildContext, type ControlHandleBase, type ControlSpecBase } from '../types';
+import { resolveConeAxis, toVec3, type BuiltControl, type ControlBuildContext, type ControlHandleBase, type ControlSpecBase, type ManipulatorMode } from '../types';
 
 export interface LimbPoleSpec {
   color?: number;
@@ -42,11 +42,6 @@ export interface LimbControlSpec extends ControlSpecBase {
    *  'auto'（默认）按首解后姿势实测「正指向 pole 的中骨局部轴」，开启瞬间修正量≈0 零跳变；
    *  'none' 关闭 */
   poleDirection?: 'auto' | 'none';
-  /** 伸展兜底舵控（默认 false）：pole 拖拽中且链已顶到端球可达边界（拉到当前允许的最直）时进入舵控——
-   *  pole 球离面自由飞，其到「根骨→端球」连线垂直距离的变化量 1:1 转为肘部离轴高度的变化：
-   *  拖离线远 → 弯（往哪边拖往哪边弯）；拖回线上 → 伸直（可逆）；绕线转 → 距离不变，纯 swivel。
-   *  一次拖拽内锁存，松手球吸回恒距球面、交还 pole 本职 */
-  steer?: boolean;
   /** 端骨旋转通道（默认 false）：端骨关节挂一副旋转环驱动端骨朝向（①脚朝向/手腕翻向），
    *  随操纵器模式切换显示（rotate 模式下端球隐藏、换环上场） */
   endRotation?: boolean;
@@ -67,12 +62,9 @@ export interface LimbControlHandle extends ControlHandleBase {
   setKeepAlive(k: number): void;
   setPoleRadius(radius: number): void;
   setPoleConeAngleDeg(deg: number): void;
-  setSteer(on: boolean): void;
   setGuideVisible(visible: boolean): void;
 }
 
-/** 舵控触发线：根→端骨距离 ≥ 端球当前可达上限 × 0.98（即"拉到允许的最直"） */
-const STEER_EXT_THRESHOLD = 0.98;
 const _sRoot = new Vector3();
 const _sEnd = new Vector3();
 const _sAxis = new Vector3();
@@ -97,8 +89,8 @@ const _midPos = new Vector3();
 const _polePos = new Vector3();
 const _midQ = new Quaternion();
 
-/** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制）+ pole 球（恒距方向锥）+ 引导线，
- *  内置 roll 修正实测（A）与伸展舵控（B）两个交互层结论 */
+/** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制）+ pole 球（恒距方向锥，双通道转向球）+ 引导线，
+ *  内置 roll 修正实测（A）与 pole 双通道（move 拖 = 调弯曲量 / rotate 拖 = swivel）两个交互层结论 */
 export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec): BuiltControl {
   const rootObj = ctx.bone(spec.rootBone);
   const midObj = ctx.bone(spec.middleBone);
@@ -106,6 +98,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   const initial = spec.position ? toVec3(spec.position) : endObj.getWorldPosition(new Vector3());
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xff5533, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
+  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球（pole 是双通道转向球，不开箭头）
   ctx.scene.add(target);
 
   const axis = resolveConeAxis(spec.pole?.coneAxis, ctx.facing);
@@ -139,19 +132,19 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   let reachScale = spec.reachScale ?? ctx.defaults.reachScale;
   let keepAlive = spec.keepAlive ?? ctx.defaults.poleKeepAlive;
-  let steerOn = spec.steer ?? false;
   let reach = 0;
-  let effReach = 0; // 端球当前可达上限（reach × min(reachScale, keepAlive)），舵控触发线的基准
   let lenA = 0; // 上骨长（root→middle）
   let lenB = 0; // 下骨长（middle→end）
-  let steerLatched = false; // 一次拖拽内舵控一旦触发即锁存，松手才交还 pole 本职
-  let steerH0 = 0; // 进入舵控时 pole 球的离轴距离（映射零点，防跳变）
-  let steerHElbow0 = 0; // 进入舵控时肘部（中骨）的离轴高度，由当前骨距反推
+  // pole 双通道：move 模式拖肘球 = 调弯曲量（bend），rotate 模式拖 = 绕轴 swivel（纯 pole 本职）。
+  // 模式由 SkeletonControls.setManipulatorMode 经 BuiltControl.setMode 下发
+  let currentMode: ManipulatorMode = 'move';
+  let poleBendActive = false; // 一次 move 模式 pole 拖拽内 bend 激活，松手即交还恒距球面
+  let poleH0 = 0; // 进入 bend 时 pole 球的离轴距离（映射零点，防跳变）
+  let poleHElbow0 = 0; // 进入 bend 时肘部（中骨）的离轴高度，由当前骨距反推
 
   const applyReach = () => {
     if (reach > 0) {
-      effReach = reach * Math.min(reachScale, keepAlive);
-      target.setReachConstraint(rootObj, effReach);
+      target.setReachConstraint(rootObj, reach * Math.min(reachScale, keepAlive));
     }
   };
   const applyPoleCone = () => pole.setConeConstraint(midObj, axis, MathUtils.degToRad(angleDeg), poleRadius, poleRadius);
@@ -164,24 +157,25 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     setKeepAlive: (k) => { keepAlive = k; applyReach(); },
     setPoleRadius: (r) => { poleRadius = r; applyPoleCone(); },
     setPoleConeAngleDeg: (d) => { angleDeg = d; applyPoleCone(); },
-    setSteer: (on) => {
-      steerOn = on;
-      if (steerLatched) { pole.setConstraintsSuspended(false); steerLatched = false; }
-    },
     setGuideVisible: (v) => { guide?.setVisible(v); },
   };
 
   return {
     name: spec.name, kind: 'limb',
     targets: [target, pole],
-    moveTargets: [target], // pole 是旋转向控制，两种模式下都可用，不参与 move/rotate 切换
+    moveTargets: [target], // pole 是双通道转向球（move=弯曲量，rotate=swivel），两种模式下都可用，不参与切换
     rotateRings: rings ? [rings] : undefined,
     modifiers,
+    setMode(mode) {
+      currentMode = mode;
+      // 模式切换发生在 pole 拖拽中途：结束 bend，球立即吸回恒距球面交还 pole 本职
+      if (poleBendActive) { pole.setConstraintsSuspended(false); poleBendActive = false; }
+    },
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);
       if (!m) throw ThreeIKError.configError(`limb 控制点 "${spec.name}": ${spec.rootBone}→${spec.endBone} 不是直系链`);
       reach = m.reach;
-      // 上下骨长（舵控的离轴距离↔弯度映射用；骨长不变，postSolve 量一次即可）
+      // 上下骨长（pole 弯曲映射用；骨长不变，postSolve 量一次即可）
       lenA = rootObj.getWorldPosition(_rootPos).distanceTo(midObj.getWorldPosition(_midPos));
       lenB = _midPos.distanceTo(endObj.getWorldPosition(_endPos));
       // 顺序即语义：先收拢钳制，再捕获携带偏移（否则偏移按未收拢位置算）
@@ -209,37 +203,38 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       rings?.update(); // 环心/朝向初始同步（首解后姿势）
     },
     update() {
-      // B：伸展兜底舵控——链顶到端球可达边界时 pole 方向权几何归零，此时把球从恒距球面上放开，
-      // 用球离轴距离的变化量 1:1 驱动肘部离轴高度：h肘 = h肘0 + (h球 − h球0)，再由平面几何
-      // d = √(a²−h肘²)+√(b²−h肘²) 求端球应到的轴上位置：拖远→弯，拖回→伸（过界被钳回，可逆），
-      // 绕轴转→h球不变→纯 swivel。锁存时实测 (h球0, h肘0) 零点：进入瞬间零跳变；h肘0 用余弦定理
-      // 从当前骨距反推——不能用球的绝对距离当弯曲量：pole 球自带恒距半径，拉直时它离轴已≈半径
-      if (steerOn) {
+      // pole 双通道之 move 模式：拖肘球 = 位置操作 → 把肘部拉离「根骨→端球」连线 = 调弯曲量
+      // （伸直时拖 = 从直变弯；任何弯度下拖都继续调，无伸展门槛）。映射：球离轴距离的变化量
+      // 1:1 转为肘部离轴高度的变化：h肘 = h肘0 + (h球 − h球0)，再由平面几何
+      // d = √(a²−h肘²)+√(b²−h肘²) 求端球应到的轴上位置：拖远→弯，拖回→伸（过界被钳回，可逆）。
+      // 拖拽首帧实测 (h球0, h肘0) 零点：进入瞬间零跳变；h肘0 用余弦定理从当前骨距反推——
+      // 不能用球的绝对距离当弯曲量：pole 球自带恒距半径，拉直时它离轴已≈半径。
+      // rotate 模式拖肘球 = 纯 swivel：锥约束保持生效，pole 方向权照常驱动中骨绕轴转，本块不介入
+      if (currentMode === 'move') {
         if (!pole.isDragging) {
-          if (steerLatched) { pole.setConstraintsSuspended(false); steerLatched = false; }
+          if (poleBendActive) { pole.setConstraintsSuspended(false); poleBendActive = false; }
         } else {
           rootObj.getWorldPosition(_sRoot);
           _sAxis.subVectors(target.position, _sRoot).normalize();
-          if (!steerLatched && effReach > 0) {
-            endObj.getWorldPosition(_sEnd);
-            steerLatched = _sRoot.distanceTo(_sEnd) / effReach > STEER_EXT_THRESHOLD;
-            if (steerLatched) {
+          if (!poleBendActive) {
+            const d0 = _sRoot.distanceTo(target.position);
+            if (d0 > 1e-4) { // 端球贴着根骨时轴退化，本次拖拽不启用 bend
+              poleBendActive = true;
               pole.setConstraintsSuspended(true); // 球离面自由飞
               _sOff.subVectors(pole.position, _sRoot);
-              steerH0 = perpLen(_sOff, _sAxis);
-              const d0 = _sRoot.distanceTo(_sEnd);
+              poleH0 = perpLen(_sOff, _sAxis);
               const aProj = (d0 * d0 + lenA * lenA - lenB * lenB) / (2 * d0); // 余弦定理：上骨在轴上的投影
-              steerHElbow0 = Math.sqrt(Math.max(0, lenA * lenA - aProj * aProj));
+              poleHElbow0 = Math.sqrt(Math.max(0, lenA * lenA - aProj * aProj));
             }
           }
-          if (steerLatched) {
+          if (poleBendActive) {
             _sOff.subVectors(pole.position, _sRoot);
             const hElbow = MathUtils.clamp(
-              steerHElbow0 + perpLen(_sOff, _sAxis) - steerH0,
+              poleHElbow0 + perpLen(_sOff, _sAxis) - poleH0,
               0, Math.min(lenA, lenB) * 0.999,
             );
             const d = Math.max(0.05, chainSpan(lenA, lenB, hElbow));
-            // moveTo 过可达钳制：拖回线上时手球最多回到 effReach 边界（= 允许的最直）
+            // moveTo 过可达钳制：拖回线上时手球最多回到 reach×keepAlive 边界（= 允许的最直）
             target.moveTo(_sMove.copy(_sRoot).addScaledVector(_sAxis, d));
           }
         }

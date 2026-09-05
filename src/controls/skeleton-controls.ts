@@ -40,9 +40,10 @@ const BUILTINS: Record<string, ControlKindFactory> = {
  *  1. modifier 按根骨在骨架中的深度排序（hips 搬全身最先解；spine 动肩膀必须先于手臂；
  *     同深度保持声明顺序）
  *  2. 装配时内部先跑一帧 rig.update(0)，钳制锚点/携带偏移/poleDirection 都按求解后姿势捕获
- *  3. limb 的 roll 修正实测（poleDirection:'auto'）与伸展舵控（steer:true）是声明开关
+ *  3. limb 的 roll 修正实测（poleDirection:'auto'）是声明开关；pole 球是双通道转向球
+ *     （move 模式拖 = 调弯曲量，rotate 模式拖 = 绕轴 swivel），随操纵器模式切换
  *
- * 应用侧每帧：`rig.update(dt)` 之后调 `ctl.update()`（携带 → 舵控 → 引导线）。
+ * 应用侧每帧：`rig.update(dt)` 之后调 `ctl.update()`（携带 → pole 双通道 → 引导线）。
  */
 export class SkeletonControls {
   private readonly controls = new Map<string, BuiltControl>();
@@ -107,7 +108,7 @@ export class SkeletonControls {
     this.controls.delete(name);
   }
 
-  /** 每帧调用（rig.update 之后）：携带跟随 → steer 舵控 → 引导线 */
+  /** 每帧调用（rig.update 之后）：携带跟随 → pole 双通道 → 引导线 */
   update(): void {
     for (const c of this.controls.values()) {
       for (const t of c.targets) t.carryAlong();
@@ -136,7 +137,8 @@ export class SkeletonControls {
   }
 
   private applyManipulatorMode(c: BuiltControl): void {
-    if (!c.rotateRings?.length) return; // 无旋转通道：不参战
+    c.setMode?.(this.manipulatorMode); // 双通道控制点（limb pole）无条件收模式
+    if (!c.rotateRings?.length) return; // 无旋转通道：球/环不切换
     const move = this.manipulatorMode === 'move';
     for (const t of c.moveTargets ?? c.targets) {
       t.setInteractive(move);

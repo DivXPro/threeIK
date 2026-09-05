@@ -38,6 +38,7 @@ export function buildLookAtControl(ctx: ControlBuildContext, spec: LookAtControl
     ? toVec3(spec.position)
     : rootBoneObj.getWorldPosition(new Vector3()).addScaledVector(axis, radius);
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xffffff, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
+  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球
   ctx.scene.add(target);
   const modifier = new CCDIkModifier(
     [{ rootBone: spec.rootBone, endBone: spec.endBone, target }],

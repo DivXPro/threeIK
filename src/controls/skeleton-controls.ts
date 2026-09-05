@@ -7,9 +7,10 @@ import { buildRootControl, type RootControlSpec } from './kinds/root';
 import { buildLimbControl, type LimbControlSpec } from './kinds/limb';
 import { buildLookAtControl, type LookAtControlSpec } from './kinds/look-at';
 import { buildChainControl, type ChainControlSpec } from './kinds/chain';
+import { buildBoneControl, type BoneControlSpec } from './kinds/bone';
 import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ManipulatorMode } from './types';
 
-export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec;
+export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec | BoneControlSpec;
 /** 声明式控制点：内置 4 种 + registerControlKind 注册的自定义 kind */
 export type ControlPointSpec = BuiltinControlSpec | (ControlSpecBase & { kind: string });
 
@@ -33,6 +34,7 @@ const BUILTINS: Record<string, ControlKindFactory> = {
   limb: buildLimbControl as ControlKindFactory,
   lookAt: buildLookAtControl as ControlKindFactory,
   chain: buildChainControl as ControlKindFactory,
+  bone: buildBoneControl as ControlKindFactory,
 };
 
 /**

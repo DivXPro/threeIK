@@ -14,3 +14,4 @@ export type { RootControlSpec, RootControlHandle } from './kinds/root';
 export type { LimbControlSpec, LimbPoleSpec, LimbControlHandle } from './kinds/limb';
 export type { LookAtControlSpec, LookAtControlHandle } from './kinds/look-at';
 export type { ChainControlSpec, ChainControlHandle } from './kinds/chain';
+export type { BoneControlSpec, BoneControlHandle } from './kinds/bone';

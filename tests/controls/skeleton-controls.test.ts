@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Bone, Object3D, Quaternion, Scene, Vector3 } from 'three';
 import { SkeletonRig } from '../../src/core/skeleton-rig';
 import { createSkeletonControls, registerControlKind } from '../../src/controls';
-import type { BuiltControl, ControlHandleBase, LimbControlHandle, RootControlHandle } from '../../src/controls';
+import type { BoneControlHandle, BuiltControl, ChainControlHandle, ControlHandleBase, LimbControlHandle, RootControlHandle } from '../../src/controls';
 import { DragTarget } from '../../src/controls/drag-target';
 import { makeCamera, makeDomStub } from './test-utils';
 
@@ -87,7 +87,7 @@ describe('createSkeletonControls', () => {
     const neck = rig.getBoneAt(rig.boneIndex('Neck'));
     const arm = ctl.get<LimbControlHandle>('arm')!;
     expect(arm.pole.ball.getWorldPosition(new Vector3()).distanceTo(fore.getWorldPosition(new Vector3()))).toBeCloseTo(0.2, 5);
-    expect(ctl.get('head')!.target.getWorldPosition(new Vector3()).distanceTo(neck.getWorldPosition(new Vector3()))).toBeCloseTo(0.35, 5);
+    expect(ctl.get('head')!.target!.getWorldPosition(new Vector3()).distanceTo(neck.getWorldPosition(new Vector3()))).toBeCloseTo(0.35, 5);
     ctl.dispose();
   });
 
@@ -116,7 +116,7 @@ describe('createSkeletonControls', () => {
       rig, scene, camera, dom,
       controls: [{ kind: 'root', name: 'hips', bone: 'Hips' }],
     });
-    const hips = ctl.get('hips')!;
+    const hips = ctl.get<RootControlHandle>('hips')!;
     hips.target.moveTo(new Vector3(0.3, 1, 0)); // 半径 0.4 内
     rig.update(0);
     const hipsBone = rig.getBoneAt(rig.boneIndex('Hips'));
@@ -144,7 +144,7 @@ describe('createSkeletonControls', () => {
     const distBefore = armH.target.getWorldPosition(new Vector3()).distanceTo(armBone.getWorldPosition(new Vector3()));
     const footBefore = legH.target.position.clone();
 
-    ctl.get('hips')!.target.moveTo(new Vector3(0, 0.8, 0)); // 下蹲 0.2
+    ctl.get<RootControlHandle>('hips')!.target.moveTo(new Vector3(0, 0.8, 0)); // 下蹲 0.2
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
@@ -383,8 +383,8 @@ describe('createSkeletonControls', () => {
     expect(legH.pole.isDragging).toBe(true);
     dom.fire('pointerup', {});
     // 纯位置控制点（chain）两种模式都可用
-    dom.fire('pointerdown', clientFor(camera, ctl.get('spine')!.target.getWorldPosition(new Vector3())));
-    expect(ctl.get('spine')!.target.isDragging).toBe(true);
+    dom.fire('pointerdown', clientFor(camera, ctl.get<ChainControlHandle>('spine')!.target.getWorldPosition(new Vector3())));
+    expect(ctl.get<ChainControlHandle>('spine')!.target.isDragging).toBe(true);
     dom.fire('pointerup', {});
 
     ctl.setManipulatorMode('move');
@@ -444,6 +444,47 @@ describe('createSkeletonControls', () => {
     expect(hips.getWorldQuaternion(new Quaternion()).angleTo(hipsH.rings!.getWorldQuaternion(new Quaternion()))).toBeLessThan(1e-4);
     // 位置不被 CopyTransform 触碰（copyPosition:false）
     expect(hips.getWorldPosition(new Vector3()).distanceTo(posBefore)).toBeLessThan(1e-6);
+    ctl.dispose();
+  });
+
+  it('bone 直接掰骨：旋转专用控制点——move 模式不显示，rotate 模式拖环转骨（胸口/肩/脚尖同款）', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [{ kind: 'bone', name: 'chest', bone: 'Spine' }],
+    });
+    const chestH = ctl.get<BoneControlHandle>('chest')!;
+    const spine = rig.getBoneAt(rig.boneIndex('Spine'));
+    const neck = rig.getBoneAt(rig.boneIndex('Neck'));
+    expect(chestH.kind).toBe('bone');
+    expect(ctl.targets.length).toBe(0); // 旋转专用：没有位置球
+
+    // move 模式（默认）：环隐藏、不可命中
+    expect(chestH.rings.visible).toBe(false);
+    const neckBefore = neck.getWorldPosition(new Vector3());
+    scene.updateMatrixWorld(true);
+    const center = chestH.rings.getWorldPosition(new Vector3());
+    dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
+    expect(chestH.rings.isDragging).toBe(false);
+
+    // rotate 模式：环上场，拖 X 环绕世界 X 转（Spine 正上方是 Neck，绕 Y 转是原地打转看不出位移，
+    // 绕 X 转 Neck 才会被带起来）；取 30°→120° 非基向弧点（基向点同时落在两环平面上，浮点定胜负）
+    ctl.setManipulatorMode('rotate');
+    expect(chestH.rings.visible).toBe(true);
+    const arc = (deg: number) => center.clone().add(
+      new Vector3(0, 0.08 * Math.cos(deg * Math.PI / 180), 0.08 * Math.sin(deg * Math.PI / 180)));
+    dom.fire('pointerdown', clientFor(camera, arc(30)));
+    expect(chestH.rings.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, arc(120)));
+    dom.fire('pointerup', {});
+    const spinePosBefore = spine.getWorldPosition(new Vector3());
+    rig.update(0);
+    ctl.update();
+    scene.updateMatrixWorld(true);
+    expect(spine.getWorldQuaternion(new Quaternion()).angleTo(chestH.rings.getWorldQuaternion(new Quaternion()))).toBeLessThan(1e-4);
+    expect(neck.getWorldPosition(new Vector3()).distanceTo(neckBefore)).toBeGreaterThan(0.1); // 子骨明显被带动
+    expect(spine.getWorldPosition(new Vector3()).distanceTo(spinePosBefore)).toBeLessThan(1e-6); // 只拷旋转不碰位置
     ctl.dispose();
   });
 });

@@ -23,6 +23,7 @@ export interface LookAtControlSpec extends ControlSpecBase {
 
 export interface LookAtControlHandle extends ControlHandleBase {
   readonly kind: 'lookAt';
+  readonly target: DragTarget;
   readonly modifier: CCDIkModifier;
   setRadius(radius: number): void;
   setConeAngleDeg(deg: number): void;

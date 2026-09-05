@@ -46,6 +46,7 @@ export interface LimbControlSpec extends ControlSpecBase {
 
 export interface LimbControlHandle extends ControlHandleBase {
   readonly kind: 'limb';
+  readonly target: DragTarget;
   readonly modifier: TwoBoneIkModifier;
   /** pole 轨道球（定长绕链轴转；纯位置控制点，两种模式都常驻可用） */
   readonly pole: PoleOrbit;

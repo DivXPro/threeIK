@@ -19,6 +19,7 @@ export interface RootControlSpec extends ControlSpecBase {
 
 export interface RootControlHandle extends ControlHandleBase {
   readonly kind: 'root';
+  readonly target: DragTarget;
   readonly modifier: RootMotionModifier;
   /** 旋转环（spec.rotation: true 时存在） */
   readonly rings?: RotateRings;

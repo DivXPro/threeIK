@@ -86,8 +86,8 @@ export type ControlKindFactory<S extends ControlSpecBase = ControlSpecBase> = (c
 export interface ControlHandleBase {
   readonly name: string;
   readonly kind: string;
-  /** 主拖球（kind 副球见各具体句柄，如 limb 的 pole） */
-  readonly target: DragTarget;
+  /** 主拖球（旋转专用的 bone 控制点没有；kind 副操纵器见各具体句柄，如 limb 的 pole） */
+  readonly target?: DragTarget;
   /** 求解器逃生口：active/influence/迭代参数等直接调 */
   readonly modifier: Modifier;
   setActive(active: boolean): void;

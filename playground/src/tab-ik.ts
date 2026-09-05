@@ -3,6 +3,7 @@ import GUI from 'lil-gui';
 import type { CCDIkModifier } from 'threeik';
 import {
   createSkeletonControls,
+  type BoneControlHandle,
   type ChainControlHandle,
   type LimbControlHandle,
   type LookAtControlHandle,
@@ -61,6 +62,15 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           },
           // 脊柱 FABRIK 拉躯干（Spine→Neck）
           { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff, position: [0, 1.25, 0.3] },
+          // 直接掰骨（rotate 模式显示）：胸口拧上半身/侧倾、左右肩端肩耸肩。
+          // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧），肩膀环在手臂 TwoBone 之前（送肩后手球仍钉住）
+          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.14 },
+          { kind: 'bone', name: 'shoulderL', bone: 'mixamorigLeftShoulder', color: 0xffaa66 },
+          { kind: 'bone', name: 'shoulderR', bone: 'mixamorigRightShoulder', color: 0x66ddaa },
+          { kind: 'bone', name: 'toeL', bone: 'mixamorigLeftToeBase', color: 0x99ccff, ringRadius: 0.05 },
+          { kind: 'bone', name: 'toeR', bone: 'mixamorigRightToeBase', color: 0x66ff99, ringRadius: 0.05 },
+          // 脖子环声明在头部注视之前（同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
+          { kind: 'bone', name: 'neck', bone: 'mixamorigNeck', color: 0xdddd99 },
           {
             kind: 'limb', name: 'armL',
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
@@ -96,6 +106,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       const armRH = ctl.get<LimbControlHandle>('armR')!;
       const spineH = ctl.get<ChainControlHandle>('spine')!;
       const headH = ctl.get<LookAtControlHandle>('head')!;
+      const bones = ['chest', 'neck', 'shoulderL', 'shoulderR', 'toeL', 'toeR']
+        .map((n) => ctl!.get<BoneControlHandle>(n)!);
       const limbs = [legLH, legRH, armLH, armRH];
 
       // 钳制参数。四肢伸展上限（poleKeepAlive）：完全伸直时肘/膝的可行解集从「两球交线圆」
@@ -125,7 +137,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       };
       const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
-      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手；肘/膝 pole 常驻不切换）
+      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手 + 旋转专用：胸口/脖子/肩/脚尖；肘/膝 pole 常驻不切换）
       let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;
@@ -158,6 +170,11 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           f.add(mod as CCDIkModifier, 'maxIterations', 1, 30, 1).name('迭代次数');
           f.add(mod as CCDIkModifier, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
         }
+      }
+      // 直接掰骨（胸口/脖子/肩/脚尖）：旋转专用控制点，rotate 模式（E）显示
+      const fBone = gui.addFolder('直接掰骨（E 模式）');
+      for (const [i, name] of ['胸口', '脖子', '左肩', '右肩', '左脚尖', '右脚尖'].entries()) {
+        fBone.add(bones[i]!.modifier, 'active').name(name);
       }
       // 球的范围钳制参数（区别于求解器的"求解角步长"）
       const fClamp = gui.addFolder('钳制（拖球范围）');

@@ -19,6 +19,7 @@ export interface ChainControlSpec extends ControlSpecBase {
 
 export interface ChainControlHandle extends ControlHandleBase {
   readonly kind: 'chain';
+  readonly target: DragTarget;
   readonly modifier: FabrikModifier;
   /** 实测链可达半径（米，世界空间） */
   readonly reach: number;

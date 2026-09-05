@@ -7,7 +7,7 @@ import { buildRootControl, type RootControlSpec } from './kinds/root';
 import { buildLimbControl, type LimbControlSpec } from './kinds/limb';
 import { buildLookAtControl, type LookAtControlSpec } from './kinds/look-at';
 import { buildChainControl, type ChainControlSpec } from './kinds/chain';
-import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase } from './types';
+import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ManipulatorMode } from './types';
 
 export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec;
 /** 声明式控制点：内置 4 种 + registerControlKind 注册的自定义 kind */
@@ -47,6 +47,7 @@ const BUILTINS: Record<string, ControlKindFactory> = {
 export class SkeletonControls {
   private readonly controls = new Map<string, BuiltControl>();
   private readonly ctx: ControlBuildContext;
+  private manipulatorMode: ManipulatorMode = 'move';
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
@@ -59,7 +60,7 @@ export class SkeletonControls {
       facing: (options.facing ?? new Vector3(0, 0, -1)).clone().normalize(),
       defaults: {
         reachScale: 1, poleKeepAlive: 0.96, poleRadius: 0.2, poleAngleDeg: 100,
-        lookAtRadius: 0.35, lookAtAngleDeg: 105, rootRadius: 0.4, ballRadius: 0.0225,
+        lookAtRadius: 0.35, lookAtAngleDeg: 105, rootRadius: 0.4, ballRadius: 0.0225, ringRadius: 0.08,
         ...options.defaults,
       },
       bone: (name) => rig.getBoneAt(rig.boneIndex(name)),
@@ -122,6 +123,31 @@ export class SkeletonControls {
     this.controls.clear();
   }
 
+  /** 操纵器模式切换（Maya W/E）：move = 位置球，rotate = 旋转环。
+   *  仅带旋转通道的控制点响应（球藏起、环上场）；纯位置控制点两种模式下都保持可用 */
+  setManipulatorMode(mode: ManipulatorMode): void {
+    if (this.manipulatorMode === mode) return;
+    this.manipulatorMode = mode;
+    for (const c of this.controls.values()) this.applyManipulatorMode(c);
+  }
+
+  getManipulatorMode(): ManipulatorMode {
+    return this.manipulatorMode;
+  }
+
+  private applyManipulatorMode(c: BuiltControl): void {
+    if (!c.rotateRings?.length) return; // 无旋转通道：不参战
+    const move = this.manipulatorMode === 'move';
+    for (const t of c.moveTargets ?? c.targets) {
+      t.setInteractive(move);
+      t.setVisible(move);
+    }
+    for (const r of c.rotateRings) {
+      r.setInteractive(!move);
+      r.setVisible(!move);
+    }
+  }
+
   private buildControl(spec: ControlPointSpec): BuiltControl {
     if (this.controls.has(spec.name)) {
       throw ThreeIKError.configError(`控制点重名: "${spec.name}"`);
@@ -132,6 +158,7 @@ export class SkeletonControls {
     }
     const c = factory(this.ctx, spec);
     this.controls.set(spec.name, c);
+    this.applyManipulatorMode(c);
     return c;
   }
 

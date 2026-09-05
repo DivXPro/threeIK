@@ -59,6 +59,8 @@ export class DragTarget extends Object3D {
   private coneMaxDist = Infinity;
   private readonly dragControl?: DragControl;
   private controlLocked = false;
+  // 操纵器模式切换（move/rotate）用：非交互时 pointerdown 不响应（球本体可由 setVisible 隐藏）
+  private interactive = true;
   // 跟随锚点：非拖拽时球随锚点（通常是钳制中心骨）世界平移，保持相对偏移——
   // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
   private carryAnchor: Object3D | null = null;
@@ -98,6 +100,7 @@ export class DragTarget extends Object3D {
     };
     // 监听器保存为字段引用，dispose 可移除（编辑器多视图/页签切换防泄漏）
     this.onPointerDown = (e: DragPointerEvent) => {
+      if (!this.interactive || !this.ball.visible) return;
       setNdc(e);
       ray.setFromCamera(ndc, camera);
       // 容差命中：raycast 缩小版球体容易脱靶（尤其触屏），按相机距离给射线一个世界余量
@@ -135,6 +138,16 @@ export class DragTarget extends Object3D {
   /** 是否正被拖拽（steer 舵控/自动动画目标据此判定） */
   get isDragging(): boolean {
     return this.dragging;
+  }
+
+  /** 操纵器模式切换：非交互时 pointerdown 不响应 */
+  setInteractive(v: boolean): void {
+    this.interactive = v;
+  }
+
+  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中） */
+  setVisible(v: boolean): void {
+    this.ball.visible = v;
   }
 
   /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离。

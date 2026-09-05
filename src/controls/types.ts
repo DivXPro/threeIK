@@ -2,6 +2,7 @@ import { Bone, Camera, Object3D, Vector3 } from 'three';
 import type { SkeletonRig } from '../core/skeleton-rig';
 import type { Modifier } from '../modifiers/modifier';
 import type { DragControl, DragDom, DragTarget } from './drag-target';
+import type { RotateRings } from './rotate-rings';
 
 /** 全局默认钳制参数（spec 逐项覆盖；均为装配后可经句柄继续调节的初值） */
 export interface ControlsDefaults {
@@ -21,6 +22,8 @@ export interface ControlsDefaults {
   rootRadius?: number;
   /** 拖球视觉半径，默认 0.0225 */
   ballRadius?: number;
+  /** 旋转环半径（世界坐标），默认 0.08 */
+  ringRadius?: number;
 }
 
 export type ResolvedDefaults = Required<ControlsDefaults>;
@@ -53,12 +56,19 @@ export interface ControlBuildContext {
   bone(name: string): Bone;
 }
 
+/** 操纵器模式（Maya W/E）：move = 位置球，rotate = 旋转环（仅双通道控制点响应切换） */
+export type ManipulatorMode = 'move' | 'rotate';
+
 /** kind 工厂产物：装配器据此做 modifier 深度排序、首解、逐帧更新与清理 */
 export interface BuiltControl {
   readonly name: string;
   readonly kind: string;
   /** 全部拖球（ctl.update 里统一 carryAlong） */
   readonly targets: DragTarget[];
+  /** 旋转环（双通道控制点；装配器按操纵器模式切换 球↔环 的显示与交互） */
+  readonly rotateRings?: RotateRings[];
+  /** 参与 move 模式切换的球（缺省 = targets；limb 的 pole 等旋转向球不在其列——两种模式下都可用） */
+  readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */
   readonly modifiers: { modifier: Modifier; rootBone: string }[];
   /** 首解（rig.update(0)）之后调用：设钳制、捕获携带偏移、实测 poleDirection */

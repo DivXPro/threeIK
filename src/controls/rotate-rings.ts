@@ -187,7 +187,7 @@ export class RotateRings extends Object3D {
     for (let i = 0; i < 4; i++) {
       const isView = i === 3;
       if (isView) this.camera.getWorldDirection(_axis);
-      else _axis.copy(AXES[i]).applyQuaternion(_pq);
+      else _axis.copy(AXES[i]!).applyQuaternion(_pq);
       const radius = this.ringRadius * (isView ? VIEW_RING_SCALE : 1);
       _plane.setFromNormalAndCoplanarPoint(_axis, _c);
       const p = _ray.ray.intersectPlane(_plane, _p);

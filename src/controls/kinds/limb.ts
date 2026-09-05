@@ -1,7 +1,9 @@
 import { MathUtils, Quaternion, Vector3 } from 'three';
 import { ThreeIKError } from '../../core/errors';
 import { TwoBoneIkModifier } from '../../modifiers/ik/two-bone-ik';
+import { CopyTransformModifier } from '../../modifiers/constraints/copy-transform';
 import { DragTarget } from '../drag-target';
+import { RotateRings } from '../rotate-rings';
 import { PoleGuide } from '../guides';
 import { measureChain } from '../measure-chain';
 import { resolveConeAxis, toVec3, type BuiltControl, type ControlBuildContext, type ControlHandleBase, type ControlSpecBase } from '../types';
@@ -45,6 +47,11 @@ export interface LimbControlSpec extends ControlSpecBase {
    *  拖离线远 → 弯（往哪边拖往哪边弯）；拖回线上 → 伸直（可逆）；绕线转 → 距离不变，纯 swivel。
    *  一次拖拽内锁存，松手球吸回恒距球面、交还 pole 本职 */
   steer?: boolean;
+  /** 端骨旋转通道（默认 false）：端骨关节挂一副旋转环驱动端骨朝向（①脚朝向/手腕翻向），
+   *  随操纵器模式切换显示（rotate 模式下端球隐藏、换环上场） */
+  endRotation?: boolean;
+  /** 旋转环半径（默认 defaults.ringRadius） */
+  ringRadius?: number;
 }
 
 export interface LimbControlHandle extends ControlHandleBase {
@@ -52,6 +59,8 @@ export interface LimbControlHandle extends ControlHandleBase {
   readonly modifier: TwoBoneIkModifier;
   /** pole 拖球 */
   readonly pole: DragTarget;
+  /** 端骨旋转环（spec.endRotation: true 时存在） */
+  readonly rings?: RotateRings;
   /** 实测链可达半径（米，世界空间，未经 keepAlive 收缩） */
   readonly reach: number;
   setReachScale(scale: number): void;
@@ -114,6 +123,20 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   }]);
   const guide = spec.pole?.guide === false ? null : new PoleGuide(ctx.scene, pole, midObj);
 
+  // 端骨旋转通道（endRotation）：旋转环驱动端骨朝向；CopyTransform 只拷旋转、不碰位置（位置仍归端球/链 IK）
+  let rings: RotateRings | undefined;
+  const modifiers: BuiltControl['modifiers'] = [{ modifier, rootBone: spec.rootBone }];
+  if (spec.endRotation) {
+    rings = new RotateRings(ctx.camera, ctx.dom, { ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius, dragControl: ctx.dragControl });
+    rings.setJoint(endObj);
+    ctx.scene.add(rings);
+    // rootBone=端骨（链上最深）：深度排序保证定向在链 IK 摆位之后执行
+    modifiers.push({
+      modifier: new CopyTransformModifier([{ applyBone: spec.endBone, referenceType: 'object', referenceObject: rings, copyPosition: false, copyRotation: true }]),
+      rootBone: spec.endBone,
+    });
+  }
+
   let reachScale = spec.reachScale ?? ctx.defaults.reachScale;
   let keepAlive = spec.keepAlive ?? ctx.defaults.poleKeepAlive;
   let steerOn = spec.steer ?? false;
@@ -134,7 +157,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   const applyPoleCone = () => pole.setConeConstraint(midObj, axis, MathUtils.degToRad(angleDeg), poleRadius, poleRadius);
 
   const handle: LimbControlHandle = {
-    name: spec.name, kind: 'limb', target, pole, modifier,
+    name: spec.name, kind: 'limb', target, pole, modifier, rings,
     get reach() { return reach; },
     setActive: (a) => { modifier.active = a; },
     setReachScale: (s) => { reachScale = s; applyReach(); },
@@ -151,7 +174,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   return {
     name: spec.name, kind: 'limb',
     targets: [target, pole],
-    modifiers: [{ modifier, rootBone: spec.rootBone }],
+    moveTargets: [target], // pole 是旋转向控制，两种模式下都可用，不参与 move/rotate 切换
+    rotateRings: rings ? [rings] : undefined,
+    modifiers,
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);
       if (!m) throw ThreeIKError.configError(`limb 控制点 "${spec.name}": ${spec.rootBone}→${spec.endBone} 不是直系链`);
@@ -181,6 +206,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
           modifier.updateConfig(0, { poleDirection: 'custom', poleDirectionVector: pv.clone() });
         }
       }
+      rings?.update(); // 环心/朝向初始同步（首解后姿势）
     },
     update() {
       // B：伸展兜底舵控——链顶到端球可达边界时 pole 方向权几何归零，此时把球从恒距球面上放开，
@@ -218,6 +244,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
           }
         }
       }
+      rings?.update();
       guide?.update();
     },
     handle,
@@ -227,6 +254,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       ctx.scene.remove(pole);
       target.dispose();
       pole.dispose();
+      rings?.dispose();
     },
   };
 }

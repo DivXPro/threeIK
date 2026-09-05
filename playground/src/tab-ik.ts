@@ -66,16 +66,15 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
             color: 0xff5533, position: [0.35, 1.33, 0.32],
             endRotation: true, // 手腕翻向
-            // 肘 pole 默认在肘的下方偏后（≈肘朝下，自然垂臂的弯曲方向）：锥轴取背后方向，
-            // 半角 130° 覆盖垂臂姿势（膝的 100° 会把这些自然姿势挡在锥外）
-            pole: { color: 0xccff66, position: [0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
+            // 肘 pole：球沿环滑（环面 ⊥ 肩→腕链轴），初始方向提示摆肘的后下方（≈自然垂臂的弯曲方向）
+            pole: { color: 0xccff66, position: [0.38, 0.98, 0.2] },
           },
           {
             kind: 'limb', name: 'armR',
             rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
             color: 0x33ff77, position: [-0.35, 1.33, 0.32],
             endRotation: true,
-            pole: { color: 0x66ffcc, position: [-0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
+            pole: { color: 0x66ffcc, position: [-0.38, 0.98, 0.2] },
           },
           // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后
           { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, position: [0, 1.7, 0.9] },
@@ -107,7 +106,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         poleKeepAlive: 0.96,
         hipsRadius: 0.4,
         headRadius: 0.35, headAngleDeg: 105,
-        poleRadius: 0.2, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
+        poleRadius: 0.2,
       };
       const applyReach = () => {
         for (const l of limbs) {
@@ -121,19 +120,12 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         headH.setRadius(clampParams.headRadius);
         headH.setConeAngleDeg(clampParams.headAngleDeg);
       };
-      const applyPoleCone = () => {
-        for (const l of [legLH, legRH]) {
-          l.setPoleRadius(clampParams.poleRadius);
-          l.setPoleConeAngleDeg(clampParams.poleAngleDeg);
-        }
-        for (const l of [armLH, armRH]) {
-          l.setPoleRadius(clampParams.poleRadius);
-          l.setPoleConeAngleDeg(clampParams.elbowPoleAngleDeg);
-        }
+      const applyPoleRadius = () => {
+        for (const l of limbs) l.setPoleRadius(clampParams.poleRadius);
       };
       const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
-      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手/肘/膝）
+      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手；肘/膝 pole 常驻不切换）
       let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;
@@ -185,10 +177,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       // 求解从"纯注视瞄准"退化成"摆放端骨"，头会拧去够球
       fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('半径(m)').onChange(applyHeadCone);
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
-      const fPole = fClamp.addFolder('膝/肘 pole 球');
-      fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
-      fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
-      fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
+      const fPole = fClamp.addFolder('膝/肘 pole（环上带球）');
+      fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('环半径(m)').onChange(applyPoleRadius);
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {

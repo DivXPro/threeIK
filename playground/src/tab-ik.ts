@@ -17,6 +17,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
   let character: LoadedCharacter | null = null;
   let ctl: SkeletonControls | null = null;
   let unsubFrame: (() => void) | null = null;
+  let onKey: ((e: KeyboardEvent) => void) | null = null;
 
   return {
     async mount() {
@@ -41,13 +42,14 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         dragControl: ctx.dragControl,
         facing,
         controls: [
-          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0] },
+          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true, ringRadius: 0.12 },
           {
             kind: 'limb', name: 'legL',
             rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
             color: 0x3388ff, position: [0.25, 0.3, 0.4],
             carry: false, // 脚钉地：下蹲演示的基础（锚点 UpLeg 随髋动）
             steer: true,
+            endRotation: true, // ①脚朝向：rotate 模式下脚部旋转环
             pole: { color: 0xffcc00, position: [0.25, 0.9, 1.2] },
           },
           {
@@ -56,6 +58,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             color: 0x22dddd, position: [-0.25, 0.3, 0.4],
             carry: false,
             steer: true,
+            endRotation: true,
             pole: { color: 0xff9933, position: [-0.25, 0.9, 1.2] },
           },
           // 脊柱 FABRIK 拉躯干（Spine→Neck）
@@ -65,6 +68,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
             color: 0xff5533, position: [0.35, 1.33, 0.32],
             steer: true,
+            endRotation: true, // 手腕翻向
             // 肘 pole 默认在肘的下方偏后（≈肘朝下，自然垂臂的弯曲方向）：锥轴取背后方向，
             // 半角 130° 覆盖垂臂姿势（膝的 100° 会把这些自然姿势挡在锥外）
             pole: { color: 0xccff66, position: [0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
@@ -74,6 +78,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
             color: 0x33ff77, position: [-0.35, 1.33, 0.32],
             steer: true,
+            endRotation: true,
             pole: { color: 0x66ffcc, position: [-0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
           },
           // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后
@@ -130,9 +135,25 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           l.setPoleConeAngleDeg(clampParams.elbowPoleAngleDeg);
         }
       };
-      const params = { steerFallback: true };
+      const params = { steerFallback: true, manipulatorMode: 'move' as 'move' | 'rotate' };
+
+      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手）
+      const applyMode = (m: 'move' | 'rotate') => {
+        params.manipulatorMode = m;
+        ctl!.setManipulatorMode(m);
+      };
+      const onKeyHandler = (e: KeyboardEvent) => {
+        if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+        if (e.key === 'w' || e.key === 'W') applyMode('move');
+        else if (e.key === 'e' || e.key === 'E') applyMode('rotate');
+      };
+      onKey = onKeyHandler;
+      window.addEventListener('keydown', onKeyHandler);
 
       gui = new GUI({ title: 'IK' });
+      gui.add(params, 'manipulatorMode', { '移动 (W)': 'move', '旋转 (E)': 'rotate' })
+        .name('操纵器模式')
+        .onChange((v: 'move' | 'rotate') => applyMode(v));
       for (const [name, mod] of [
         ['髋部 RootMotion', hipsH.modifier],
         ['TwoBone 左腿', legLH.modifier], ['TwoBone 右腿', legRH.modifier],
@@ -179,6 +200,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {
+      if (onKey) window.removeEventListener('keydown', onKey);
+      onKey = null;
       gui?.destroy();
       gui = null;
       unsubFrame?.();

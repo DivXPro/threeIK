@@ -67,16 +67,14 @@ export interface BuiltControl {
   readonly targets: DragTarget[];
   /** 旋转环（双通道控制点；装配器按操纵器模式切换 球↔环 的显示与交互） */
   readonly rotateRings?: RotateRings[];
-  /** 参与 move 模式切换的球（缺省 = targets；limb 的 pole 等旋转向球不在其列——两种模式下都可用） */
+  /** 参与 move 模式切换的球（缺省 = targets） */
   readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */
   readonly modifiers: { modifier: Modifier; rootBone: string }[];
   /** 首解（rig.update(0)）之后调用：设钳制、捕获携带偏移、实测 poleDirection */
   postSolve(): void;
-  /** 每帧调用（carryAlong 之后）：pole 双通道解算、引导线等 */
+  /** 每帧调用（carryAlong 之后）：环跟随、引导线等 */
   update?(): void;
-  /** 操纵器模式下发（装配器在 setManipulatorMode 时调用；limb 的 pole 双通道据此切换 弯度/swivel） */
-  setMode?(mode: ManipulatorMode): void;
   readonly handle: ControlHandleBase;
   /** 移除场景对象并释放资源（modifier 由装配器统一 removeModifier） */
   dispose(): void;

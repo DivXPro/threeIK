@@ -6,7 +6,7 @@ import { DragTarget } from '../drag-target';
 import { RotateRings } from '../rotate-rings';
 import { PoleGuide } from '../guides';
 import { measureChain } from '../measure-chain';
-import { resolveConeAxis, toVec3, type BuiltControl, type ControlBuildContext, type ControlHandleBase, type ControlSpecBase, type ManipulatorMode } from '../types';
+import { resolveConeAxis, toVec3, type BuiltControl, type ControlBuildContext, type ControlHandleBase, type ControlSpecBase } from '../types';
 
 export interface LimbPoleSpec {
   color?: number;
@@ -52,8 +52,10 @@ export interface LimbControlSpec extends ControlSpecBase {
 export interface LimbControlHandle extends ControlHandleBase {
   readonly kind: 'limb';
   readonly modifier: TwoBoneIkModifier;
-  /** pole 拖球 */
+  /** pole 拖球（move 模式：箭头+中心球调肘朝向） */
   readonly pole: DragTarget;
+  /** pole swivel 环（rotate 模式：拖环 = 肘绕「根→端」轴转） */
+  readonly poleRings: RotateRings;
   /** 端骨旋转环（spec.endRotation: true 时存在） */
   readonly rings?: RotateRings;
   /** 实测链可达半径（米，世界空间，未经 keepAlive 收缩） */
@@ -66,22 +68,9 @@ export interface LimbControlHandle extends ControlHandleBase {
 }
 
 const _sRoot = new Vector3();
-const _sEnd = new Vector3();
 const _sAxis = new Vector3();
 const _sOff = new Vector3();
 const _sMove = new Vector3();
-
-/** off 相对 axis 的垂直分量长度（axis 须为单位向量） */
-function perpLen(off: Vector3, axis: Vector3): number {
-  return Math.sqrt(Math.max(0, off.lengthSq() - off.dot(axis) ** 2));
-}
-
-/** 双骨链平面几何：已知上下骨长 a/b 与中骨离轴高度 h，求端骨距根骨的链轴距离。
- *  轴被中骨垂足分成 sqrt(a²−h²) 与 sqrt(b²−h²) 两段（h ≤ min(a,b)） */
-function chainSpan(lenA: number, lenB: number, h: number): number {
-  const hh = h * h;
-  return Math.sqrt(Math.max(0, lenA * lenA - hh)) + Math.sqrt(Math.max(0, lenB * lenB - hh));
-}
 // A 段（poleDirection 实测）临时量
 const _rootPos = new Vector3();
 const _endPos = new Vector3();
@@ -89,8 +78,10 @@ const _midPos = new Vector3();
 const _polePos = new Vector3();
 const _midQ = new Quaternion();
 
-/** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制）+ pole 球（恒距方向锥，双通道转向球）+ 引导线，
- *  内置 roll 修正实测（A）与 pole 双通道（move 拖 = 调弯曲量 / rotate 拖 = swivel）两个交互层结论 */
+/** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制，弯度由它离根的远近决定——Maya 同款语义）
+ *  + pole 转向控制（恒距方向锥，只管肘/膝朝向不管弯度）+ 引导线。
+ *  pole 操纵器随模式切换（Maya W/E）：move = 箭头+中心球拖位置调朝向；rotate = 肘部旋转环，
+ *  任意环的角增量映射为绕「根→端」链轴的 swivel。内置 roll 修正实测（A）。 */
 export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec): BuiltControl {
   const rootObj = ctx.bone(spec.rootBone);
   const midObj = ctx.bone(spec.middleBone);
@@ -98,7 +89,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   const initial = spec.position ? toVec3(spec.position) : endObj.getWorldPosition(new Vector3());
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xff5533, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
-  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球（pole 是双通道转向球，不开箭头）
+  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球
   ctx.scene.add(target);
 
   const axis = resolveConeAxis(spec.pole?.coneAxis, ctx.facing);
@@ -108,7 +99,28 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     ? toVec3(spec.pole.position)
     : midObj.getWorldPosition(new Vector3()).addScaledVector(axis, poleRadius);
   const pole = new DragTarget(ctx.camera, ctx.dom, poleInitial, spec.pole?.color ?? 0xffcc00, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
+  pole.setAxisHandles(true); // pole 也是普通移动操纵器（Maya 里 pole vector 就是个走 W 移动工具的普通节点）
   ctx.scene.add(pole);
+
+  // pole swivel 环（rotate 模式上场）：环心跟随 pole 球；拖任意环 = 把 pole 绕「根骨→端球」
+  // 链轴旋转（swivel）。pole 的唯一自由度就是绕链轴转，所以环的角增量按链轴符号对齐后全量映射
+  const onPoleRingDrag = (axisW: Vector3, dAngle: number) => {
+    rootObj.getWorldPosition(_sRoot);
+    _sAxis.subVectors(target.position, _sRoot);
+    if (_sAxis.lengthSq() < 1e-8) return;
+    _sAxis.normalize();
+    const s = Math.sign(axisW.dot(_sAxis)) || 1;
+    pole.getWorldPosition(_sOff).sub(_sRoot);
+    _sOff.applyAxisAngle(_sAxis, dAngle * s);
+    pole.moveTo(_sMove.copy(_sRoot).add(_sOff)); // 过锥钳制：方向进求解，半径收回球面
+  };
+  const poleRings = new RotateRings(ctx.camera, ctx.dom, {
+    ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius,
+    dragControl: ctx.dragControl,
+    onDragDelta: onPoleRingDrag,
+  });
+  poleRings.setJoint(pole); // 环心随球；球不可旋转，环朝向闲时回世界轴对齐
+  ctx.scene.add(poleRings);
 
   const modifier = new TwoBoneIkModifier([{
     rootBone: spec.rootBone, middleBone: spec.middleBone, endBone: spec.endBone,
@@ -133,14 +145,6 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   let reachScale = spec.reachScale ?? ctx.defaults.reachScale;
   let keepAlive = spec.keepAlive ?? ctx.defaults.poleKeepAlive;
   let reach = 0;
-  let lenA = 0; // 上骨长（root→middle）
-  let lenB = 0; // 下骨长（middle→end）
-  // pole 双通道：move 模式拖肘球 = 调弯曲量（bend），rotate 模式拖 = 绕轴 swivel（纯 pole 本职）。
-  // 模式由 SkeletonControls.setManipulatorMode 经 BuiltControl.setMode 下发
-  let currentMode: ManipulatorMode = 'move';
-  let poleBendActive = false; // 一次 move 模式 pole 拖拽内 bend 激活，松手即交还恒距球面
-  let poleH0 = 0; // 进入 bend 时 pole 球的离轴距离（映射零点，防跳变）
-  let poleHElbow0 = 0; // 进入 bend 时肘部（中骨）的离轴高度，由当前骨距反推
 
   const applyReach = () => {
     if (reach > 0) {
@@ -150,7 +154,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   const applyPoleCone = () => pole.setConeConstraint(midObj, axis, MathUtils.degToRad(angleDeg), poleRadius, poleRadius);
 
   const handle: LimbControlHandle = {
-    name: spec.name, kind: 'limb', target, pole, modifier, rings,
+    name: spec.name, kind: 'limb', target, pole, poleRings, modifier, rings,
     get reach() { return reach; },
     setActive: (a) => { modifier.active = a; },
     setReachScale: (s) => { reachScale = s; applyReach(); },
@@ -163,21 +167,13 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   return {
     name: spec.name, kind: 'limb',
     targets: [target, pole],
-    moveTargets: [target], // pole 是双通道转向球（move=弯曲量，rotate=swivel），两种模式下都可用，不参与切换
-    rotateRings: rings ? [rings] : undefined,
+    moveTargets: [target, pole], // pole 是普通移动操纵器：move 显球+箭头，rotate 藏球换 swivel 环
+    rotateRings: rings ? [poleRings, rings] : [poleRings],
     modifiers,
-    setMode(mode) {
-      currentMode = mode;
-      // 模式切换发生在 pole 拖拽中途：结束 bend，球立即吸回恒距球面交还 pole 本职
-      if (poleBendActive) { pole.setConstraintsSuspended(false); poleBendActive = false; }
-    },
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);
       if (!m) throw ThreeIKError.configError(`limb 控制点 "${spec.name}": ${spec.rootBone}→${spec.endBone} 不是直系链`);
       reach = m.reach;
-      // 上下骨长（pole 弯曲映射用；骨长不变，postSolve 量一次即可）
-      lenA = rootObj.getWorldPosition(_rootPos).distanceTo(midObj.getWorldPosition(_midPos));
-      lenB = _midPos.distanceTo(endObj.getWorldPosition(_endPos));
       // 顺序即语义：先收拢钳制，再捕获携带偏移（否则偏移按未收拢位置算）
       applyReach();
       applyPoleCone();
@@ -201,44 +197,10 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
         }
       }
       rings?.update(); // 环心/朝向初始同步（首解后姿势）
+      poleRings.update();
     },
     update() {
-      // pole 双通道之 move 模式：拖肘球 = 位置操作 → 把肘部拉离「根骨→端球」连线 = 调弯曲量
-      // （伸直时拖 = 从直变弯；任何弯度下拖都继续调，无伸展门槛）。映射：球离轴距离的变化量
-      // 1:1 转为肘部离轴高度的变化：h肘 = h肘0 + (h球 − h球0)，再由平面几何
-      // d = √(a²−h肘²)+√(b²−h肘²) 求端球应到的轴上位置：拖远→弯，拖回→伸（过界被钳回，可逆）。
-      // 拖拽首帧实测 (h球0, h肘0) 零点：进入瞬间零跳变；h肘0 用余弦定理从当前骨距反推——
-      // 不能用球的绝对距离当弯曲量：pole 球自带恒距半径，拉直时它离轴已≈半径。
-      // rotate 模式拖肘球 = 纯 swivel：锥约束保持生效，pole 方向权照常驱动中骨绕轴转，本块不介入
-      if (currentMode === 'move') {
-        if (!pole.isDragging) {
-          if (poleBendActive) { pole.setConstraintsSuspended(false); poleBendActive = false; }
-        } else {
-          rootObj.getWorldPosition(_sRoot);
-          _sAxis.subVectors(target.position, _sRoot).normalize();
-          if (!poleBendActive) {
-            const d0 = _sRoot.distanceTo(target.position);
-            if (d0 > 1e-4) { // 端球贴着根骨时轴退化，本次拖拽不启用 bend
-              poleBendActive = true;
-              pole.setConstraintsSuspended(true); // 球离面自由飞
-              _sOff.subVectors(pole.position, _sRoot);
-              poleH0 = perpLen(_sOff, _sAxis);
-              const aProj = (d0 * d0 + lenA * lenA - lenB * lenB) / (2 * d0); // 余弦定理：上骨在轴上的投影
-              poleHElbow0 = Math.sqrt(Math.max(0, lenA * lenA - aProj * aProj));
-            }
-          }
-          if (poleBendActive) {
-            _sOff.subVectors(pole.position, _sRoot);
-            const hElbow = MathUtils.clamp(
-              poleHElbow0 + perpLen(_sOff, _sAxis) - poleH0,
-              0, Math.min(lenA, lenB) * 0.999,
-            );
-            const d = Math.max(0.05, chainSpan(lenA, lenB, hElbow));
-            // moveTo 过可达钳制：拖回线上时手球最多回到 reach×keepAlive 边界（= 允许的最直）
-            target.moveTo(_sMove.copy(_sRoot).addScaledVector(_sAxis, d));
-          }
-        }
-      }
+      poleRings.update();
       rings?.update();
       guide?.update();
     },
@@ -249,6 +211,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       ctx.scene.remove(pole);
       target.dispose();
       pole.dispose();
+      poleRings.dispose();
       rings?.dispose();
     },
   };

@@ -85,7 +85,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
 
       const frameCb = () => {
         rig.update(1 / 60); // 无动画路径：base = rest，直接 update
-        ctl!.update();      // 求解后：携带 → pole 双通道 → 引导线
+        ctl!.update();      // 求解后：携带 → 环跟随 → 引导线
       };
       unsubFrame = ctx.onFrame(frameCb);
 
@@ -133,10 +133,12 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       };
       const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
-      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手）
+      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手/肘/膝）
+      let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;
         ctl!.setManipulatorMode(m);
+        modeCtrl?.updateDisplay(); // 键盘切换后 GUI 下拉框同步
       };
       const onKeyHandler = (e: KeyboardEvent) => {
         if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
@@ -147,7 +149,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       window.addEventListener('keydown', onKeyHandler);
 
       gui = new GUI({ title: 'IK' });
-      gui.add(params, 'manipulatorMode', { '移动 (W)': 'move', '旋转 (E)': 'rotate' })
+      modeCtrl = gui.add(params, 'manipulatorMode', { '移动 (W)': 'move', '旋转 (E)': 'rotate' })
         .name('操纵器模式')
         .onChange((v: 'move' | 'rotate') => applyMode(v));
       for (const [name, mod] of [

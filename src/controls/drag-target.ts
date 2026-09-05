@@ -77,9 +77,6 @@ export class DragTarget extends Object3D {
   // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
   private carryAnchor: Object3D | null = null;
   private readonly carryOffset = new Vector3();
-  // 钳制暂停（limb pole 弯曲解算期间球离恒距球面自由飞，弯曲量由外部从球位置解算）：
-  // 暂停时拖拽写入不过约束管线；恢复时立即收拢回约束域并重记携带偏移
-  private constraintsSuspended = false;
   // 轴箭头（Maya Move 样式）：拖箭头 = 沿该世界轴单轴移动；中心球 = 屏幕平面自由拖（默认路径）。
   // 箭头随球显隐（setVisible），根部 1/4 杆长不响应命中（让给中心球）
   private arrowsOn = false;
@@ -278,18 +275,11 @@ export class DragTarget extends Object3D {
 
   /** 拖拽命中点（世界空间）过约束管线后写入位置；指针拖拽与 moveTo 共用 */
   private applyDragPoint(hit: Vector3): void {
-    if (!this.constraintsSuspended) this.applyConstraints(hit);
+    this.applyConstraints(hit);
     const parent = this.parent;
     if (parent) parent.worldToLocal(hit);
     this.position.copy(hit);
     this.updateCarryOffset(); // 拖拽即改写相对偏移，松手后按新偏移跟随
-  }
-
-  /** 暂停/恢复约束钳制：暂停期间球自由移动（pole 弯曲解算用）；恢复时立即收拢回约束域 */
-  setConstraintsSuspended(suspended: boolean): void {
-    if (this.constraintsSuspended === suspended) return;
-    this.constraintsSuspended = suspended;
-    if (!suspended) this.snapIntoConstraints(); // 收拢后 updateCarryOffset 随 applyDragPoint 语义一致
   }
 
   /** 编程式移动（外部绑定/自动化测试）：过与指针拖拽相同的约束管线并刷新携带偏移 */
@@ -358,7 +348,7 @@ export class DragTarget extends Object3D {
     this.applyConstraints(_snap);
     if (this.parent) this.parent.worldToLocal(_snap);
     this.position.copy(_snap);
-    this.updateCarryOffset(); // 收拢改写了位置，携带偏移与实际保持一致（暂停恢复时不跳变）
+    this.updateCarryOffset(); // 收拢改写了位置，携带偏移与实际保持一致
   }
 
   dispose(): void {

@@ -57,12 +57,15 @@ export class RotateRings extends Object3D {
   private readonly startQuat = new Quaternion();
   private lastAngle = 0;
   private totalDelta = 0;
+  /** 逐事件角度增量回调（世界轴 + 弧度）：pole swivel 环等「拖动映射到他物」的用法挂这里 */
+  private readonly onDragDelta?: (axisWorld: Vector3, angleDelta: number) => void;
 
-  constructor(camera: Camera, dom: DragDom, options: { ringRadius?: number; dragControl?: DragControl } = {}) {
+  constructor(camera: Camera, dom: DragDom, options: { ringRadius?: number; dragControl?: DragControl; onDragDelta?: (axisWorld: Vector3, angleDelta: number) => void } = {}) {
     super();
     this.camera = camera;
     this.dom = dom;
     this.dragControl = options.dragControl;
+    this.onDragDelta = options.onDragDelta;
     this.ringRadius = options.ringRadius ?? 0.08;
 
     for (let i = 0; i < 3; i++) {
@@ -111,11 +114,13 @@ export class RotateRings extends Object3D {
       _plane.setFromNormalAndCoplanarPoint(this.dragAxis, _c);
       if (!_ray.ray.intersectPlane(_plane, _p)) return;
       const angle = this.angleOf(_p);
-      this.totalDelta += wrapPi(angle - this.lastAngle);
+      const delta = wrapPi(angle - this.lastAngle);
+      this.totalDelta += delta;
       this.lastAngle = angle;
       // 世界空间：q = axisAngle(轴, 总角) × 起始朝向；写回父局部
       _q.setFromAxisAngle(this.dragAxis, this.totalDelta).multiply(this.startQuat);
       this.writeWorldQuat(_q);
+      this.onDragDelta?.(this.dragAxis, delta);
     };
     this.onPointerUp = () => {
       this.dragging = false;

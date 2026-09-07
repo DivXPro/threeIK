@@ -165,7 +165,8 @@ export class DragTarget extends Object3D {
         let best = -1;
         let bestDist = Infinity;
         let bestT = 0;
-        const arrowLenWorld = this.arrowLen * this.arrowsGroup.scale.x; // 屏幕恒定大小：命中区按实际世界长度算
+        // 命中区长度 = 视觉杆长：单位箭头几何总长 1 × 组缩放（updateFrame 已含 arrowLen，勿再乘）
+        const arrowLenWorld = this.arrowsGroup.scale.x;
         for (let i = 0; i < 3; i++) {
           _axisW.copy(_AXES[i]!).applyQuaternion(_wq);
           if (!rayAxisClosest(_axisW, _c)) continue;

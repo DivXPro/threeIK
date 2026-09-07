@@ -147,6 +147,19 @@ describe('DragTarget', () => {
     dom.fire('pointerup', {});
   });
 
+  it('轴箭头命中区 = 视觉杆长（updateFrame 缩放含 arrowLen，命中不再乘一次）', () => {
+    const camera = makeCamera(); // (0,0,5) 朝 -Z 看原点，球在 dist=5
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 0.5); // arrowLen ≠ 1：旧 bug（命中长度 = arrowLen² × dist/REF）只有此时现形
+    t.setSelected(true);
+    t.updateFrame(); // 组缩放 = 0.5 × 5/3.5 ≈ 0.714 = 视觉杆长（单位几何总长 1）
+    // 点杆 70% 处 (0.5,0,0)：在视觉杆上，必须命中（旧 bug 命中区只到 0.41，此处脱靶）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.5, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    dom.fire('pointerup', {});
+  });
+
   it('轴箭头随球显隐（rotate 模式隐藏后不可命中）', () => {
     const camera = makeCamera();
     const dom = makeDomStub();

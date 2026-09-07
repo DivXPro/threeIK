@@ -22,7 +22,7 @@ export const MANIPULATOR_REF_DIST = 3.5;
 // 轴箭头共享几何（模块级单例，不随实例 dispose）：单位箭头沿 +Y，总长约 1，实例按 arrowLen 缩放
 const ARROW_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
 const ARROW_HIGHLIGHT_COLOR = 0xffee33; // hover/拖拽中的轴高亮色（Maya 同款黄）
-const _shaftGeo = new CylinderGeometry(0.035, 0.035, 0.8, 8).translate(0, 0.4, 0); // 0→0.8
+const _shaftGeo = new CylinderGeometry(0.02, 0.02, 0.8, 8).translate(0, 0.4, 0);   // 0→0.8
 const _tipGeo = new ConeGeometry(0.095, 0.2, 12).translate(0, 0.9, 0);             // 0.8→1.0
 const _AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 
@@ -169,7 +169,7 @@ export class DragTarget extends Object3D {
         _axisW.copy(_AXES[i]!).applyQuaternion(_wq);
         if (!rayAxisClosest(_axisW, _c)) continue;
         if (pick.t < arrowLenWorld * 0.25 || pick.t > arrowLenWorld * 1.15) continue;
-        if (pick.dist > tolerance + arrowLenWorld * 0.035) continue;
+        if (pick.dist > tolerance + arrowLenWorld * 0.02) continue;
         if (pick.dist < bestDist) { best = i; bestDist = pick.dist; outT.t = pick.t; }
       }
       return best;

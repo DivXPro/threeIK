@@ -1,7 +1,7 @@
 import { Camera, Object3D, Vector3 } from 'three';
 import { SkeletonRig } from '../core/skeleton-rig';
 import { ThreeIKError } from '../core/errors';
-import { DragTarget, type DragControl, type DragDom } from './drag-target';
+import { DragTarget, type DragControl, type DragDom, type DragPointerEvent } from './drag-target';
 import { resolveCustomControlKind } from './registry';
 import { buildRootControl, type RootControlSpec } from './kinds/root';
 import { buildLimbControl, type LimbControlSpec } from './kinds/limb';
@@ -37,6 +37,9 @@ const BUILTINS: Record<string, ControlKindFactory> = {
   bone: buildBoneControl as ControlKindFactory,
 };
 
+/** 空白按下的「点击」位移容差（px²）：超过即视为拖拽（转视角等），不触发失焦 */
+const BLUR_CLICK_SLOP_SQ = 4 * 4;
+
 /**
  * 骨架控制点装配器：声明式挂一整套拖球 + modifier，并把三条实测结论固化在流程里——
  *  1. modifier 按根骨在骨架中的深度排序（hips 搬全身最先解；spine 动肩膀必须先于手臂；
@@ -55,8 +58,12 @@ export class SkeletonControls {
   private selectedName: string | null = null;
   /** 本轮 pointerdown 有操纵器 onPress 认领（选中/拖拽）；点空白失焦的判定标记 */
   private pressClaimed = false;
+  /** 空白处按下的待定失焦：按下记位置，移动超阈值取消（那是在转视角），原地松开才失焦 */
+  private pendingBlur: { x: number; y: number } | null = null;
   private readonly dom: DragDom;
-  private readonly onDomPointerDown: () => void;
+  private readonly onDomPointerDown: (e: DragPointerEvent) => void;
+  private readonly onDomPointerMove: (e: DragPointerEvent) => void;
+  private readonly onDomPointerUp: () => void;
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
@@ -89,15 +96,29 @@ export class SkeletonControls {
     rig.update(0);
     for (const c of built) c.postSolve();
 
-    // 点空白失焦：本监听器在全部操纵器之后注册（同一 dom 上监听器按注册顺序运行），
-    // 轮到它时本轮 pointerdown 若没有任何操纵器 onPress 认领，即点在空白处——取消选中。
+    // 点空白失焦（松开时判定）：pointerdown 监听器在全部操纵器之后注册（同一 dom 按注册
+    // 顺序运行），轮到它时本轮事件若无任何操纵器 onPress 认领，即按在空白处——记下待定失焦；
+    // 之后拖动超阈值（那是在转视角等）取消待定，原地松开才真正失焦。
     // 三类操纵器（DragTarget/PoleOrbit/RotateRings）命中时都会先调 onPress，无需逐个查拖拽态
     this.dom = options.dom;
-    this.onDomPointerDown = () => {
-      if (this.pressClaimed) { this.pressClaimed = false; return; }
+    this.onDomPointerDown = (e) => {
+      if (this.pressClaimed) { this.pressClaimed = false; this.pendingBlur = null; return; }
+      this.pendingBlur = { x: e.clientX, y: e.clientY };
+    };
+    this.onDomPointerMove = (e) => {
+      if (!this.pendingBlur) return;
+      const dx = e.clientX - this.pendingBlur.x;
+      const dy = e.clientY - this.pendingBlur.y;
+      if (dx * dx + dy * dy > BLUR_CLICK_SLOP_SQ) this.pendingBlur = null;
+    };
+    this.onDomPointerUp = () => {
+      if (!this.pendingBlur) return;
+      this.pendingBlur = null;
       this.select(null);
     };
     this.dom.addEventListener('pointerdown', this.onDomPointerDown);
+    this.dom.addEventListener('pointermove', this.onDomPointerMove);
+    this.dom.addEventListener('pointerup', this.onDomPointerUp);
   }
 
   /** 取参数调节句柄（按声明时的 name）；泛型收窄到具体句柄类型 */
@@ -139,6 +160,9 @@ export class SkeletonControls {
 
   dispose(): void {
     this.dom.removeEventListener('pointerdown', this.onDomPointerDown);
+    this.dom.removeEventListener('pointermove', this.onDomPointerMove);
+    this.dom.removeEventListener('pointerup', this.onDomPointerUp);
+    this.pendingBlur = null;
     for (const c of this.controls.values()) {
       for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
       c.dispose();

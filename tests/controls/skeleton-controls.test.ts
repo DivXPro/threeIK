@@ -404,7 +404,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('点空白失焦：pointerdown 无操纵器认领即取消选中；点中操纵器不失焦', () => {
+  it('点空白失焦：原地松开才取消选中；按下后拖动（转视角）不失焦', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -417,13 +417,29 @@ describe('createSkeletonControls', () => {
     const legH = ctl.get<LimbControlHandle>('leg')!;
     const blank = { clientX: 2, clientY: 2, pointerId: 1 }; // 画布角落：射线打不到任何操纵器
 
-    // 点球选中 → 点空白取消
+    // 点球选中 → 空白处原地点击（按下+直接松开）→ 失焦
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
     expect(ctl.getSelected()).toBe('leg');
     dom.fire('pointerup', {});
     dom.fire('pointerdown', blank);
-    expect(ctl.getSelected()).toBe(null);
+    expect(ctl.getSelected()).toBe('leg'); // 按下时还只是待定，不失焦
     dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe(null); // 原地松开 → 失焦
+
+    // 空白处按下后拖动（转视角操作）→ 松开也不失焦
+    dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('leg');
+    dom.fire('pointerup', {});
+    dom.fire('pointerdown', blank);
+    dom.fire('pointermove', { clientX: 200, clientY: 200, pointerId: 1 }); // 拖动超阈值
+    dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe('leg'); // 拖过 ≠ 点击，保持选中
+
+    // 微小抖动（≤4px）仍算点击 → 失焦
+    dom.fire('pointerdown', blank);
+    dom.fire('pointermove', { clientX: 4, clientY: 4, pointerId: 1 });
+    dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe(null);
 
     // 点中操纵器（pole 球）不失焦
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
@@ -438,8 +454,8 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerup', {});
     // 空白点击在 rotate 模式也失焦
     dom.fire('pointerdown', blank);
-    expect(ctl.getSelected()).toBe(null);
     dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe(null);
     ctl.dispose();
   });
 

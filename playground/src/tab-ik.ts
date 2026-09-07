@@ -10,7 +10,7 @@ import {
   type RootControlHandle,
   type SkeletonControls,
 } from 'threeik/controls';
-import { loadSoldier, type LoadedCharacter } from './character';
+import { loadCharacter, type LoadedCharacter } from './character';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createIkTab(ctx: PlaygroundContext): TabHandle {
@@ -22,14 +22,13 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
 
   return {
     async mount() {
-      character = await loadSoldier(ctx.scene);
+      character = await loadCharacter(ctx.scene);
       const rig = character.rig;
       // 调试：控制台可直读 rig/控制点句柄（page 重载后失效，随 mount 重建）
       Object.assign((window as unknown as { __threeik: Record<string, unknown> }).__threeik, { rig });
 
-      // 角色朝向（模型局部前方 -Z 经 root 旋转到世界）：方向锥轴/pole 自动摆位的参照
-      const facing = new THREE.Vector3(0, 0, -1)
-        .applyQuaternion(character.root.getWorldQuaternion(new THREE.Quaternion()));
+      // 角色朝向（由加载器按模型局部前方实测）：方向锥轴/pole 自动摆位的参照
+      const facing = character.facing;
 
       // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 胸口/肩/脖子(直接掰骨)
       // → 双臂(肘 pole 朝后) → head(注视)。声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成。
@@ -74,15 +73,15 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
             color: 0xff5533,
             endRotation: true, // 手腕翻向
-            // 肘 pole：球以定长绕「肩→腕」链轴转（轨道球），初始方向提示摆肘的后下方（≈自然垂臂的弯曲方向）
-            pole: { color: 0xccff66, position: [0.38, 0.98, 0.2] },
+            // 肘 pole：球以定长绕「肩→腕」链轴转（轨道球），初始方向提示摆肘的后下方（世界 -Z = 身后，≈自然垂臂的弯曲方向）
+            pole: { color: 0xccff66, position: [0.38, 0.98, -0.2] },
           },
           {
             kind: 'limb', name: 'armR',
             rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
             color: 0x33ff77,
             endRotation: true,
-            pole: { color: 0x66ffcc, position: [-0.38, 0.98, 0.2] },
+            pole: { color: 0x66ffcc, position: [-0.38, 0.98, -0.2] },
           },
           // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后
           { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, position: [0, 1.7, 0.9] },

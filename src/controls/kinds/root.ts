@@ -42,6 +42,7 @@ export function buildRootControl(ctx: ControlBuildContext, spec: RootControlSpec
   if (spec.rotation) {
     rings = new RotateRings(ctx.camera, ctx.dom, { ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius, dragControl: ctx.dragControl });
     rings.setJoint(bone);
+    if (bone.parent) rings.setOrientationCarry(bone.parent); // FK 语义：相对骨架根携带（模型根旋转时跟随）
     rings.onPress = () => ctx.select(spec.name);
     ctx.scene.add(rings);
     // 只拷旋转：位置仍由 RootMotion/球驱动；同深度按声明顺序排在 RootMotion 之后

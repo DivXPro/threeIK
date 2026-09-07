@@ -39,6 +39,7 @@ export function buildBoneControl(ctx: ControlBuildContext, spec: BoneControlSpec
     dragControl: ctx.dragControl,
   });
   rings.setJoint(bone);
+  if (bone.parent) rings.setOrientationCarry(bone.parent); // FK 语义：相对父骨携带（弯腰时胸口/脖子跟着相对转）
   rings.onPress = () => ctx.select(spec.name);
   ctx.scene.add(rings);
 

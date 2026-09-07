@@ -424,12 +424,50 @@ describe('createSkeletonControls', () => {
     expect(legH.rings!.isDragging).toBe(true);
     dom.fire('pointermove', clientFor(camera, center.clone().add(new Vector3(0, 0, -0.08))));
     dom.fire('pointerup', {});
-    rig.update(0); // CopyTransform 求解：端骨对齐 rings 朝向
-    ctl.update();
+    // 收敛：拖环改的是「相对父骨的局部偏移」，装配后的首个完整求解会顺带把链收到
+    // pole 就位后的稳定姿势（装配首解时 pole 球未落位，弯度来源不同）——多跑几帧让
+    // 环（FK 携带）与求解互相追上
+    for (let i = 0; i < 3; i++) {
+      rig.update(0);
+      scene.updateMatrixWorld(true);
+      ctl.update();
+    }
     scene.updateMatrixWorld(true);
     const after = foot.getWorldQuaternion(new Quaternion());
     expect(after.angleTo(before)).toBeGreaterThan(0.5); // 明显转动（~90°）
     expect(after.angleTo(legH.rings!.getWorldQuaternion(new Quaternion()))).toBeLessThan(1e-4);
+    ctl.dispose();
+  });
+
+  it('旋转通道·相对跟随：弯膝后脚尖保持相对小腿的局部转角（FK 语义，不钉绝对朝向）', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, pole: { guide: false } },
+      ],
+    });
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const foot = rig.getBoneAt(rig.boneIndex('FootL'));
+    scene.updateMatrixWorld(true);
+    const localBefore = foot.quaternion.clone();
+    const worldBefore = foot.getWorldQuaternion(new Quaternion());
+
+    // 弯膝：端球从正下方拖到前上方，膝盖明显弯曲、小腿世界朝向大变
+    legH.target.moveTo(new Vector3(0.1, 0.55, 0.3));
+    // 收敛：求解 → 刷新矩阵 → 环按新父骨（小腿）朝向重算 → 再求解把环朝向写回端骨
+    for (let i = 0; i < 3; i++) {
+      rig.update(0);
+      scene.updateMatrixWorld(true);
+      ctl.update();
+    }
+    scene.updateMatrixWorld(true);
+
+    // 世界朝向跟着小腿明显转动（不再钉在绝对朝向）
+    expect(foot.getWorldQuaternion(new Quaternion()).angleTo(worldBefore)).toBeGreaterThan(0.1);
+    // 局部转角保持 = 相对小腿的角度不变（FK 相对跟随）
+    expect(foot.quaternion.angleTo(localBefore)).toBeLessThan(1e-3);
     ctl.dispose();
   });
 

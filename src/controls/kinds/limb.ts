@@ -105,6 +105,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   if (spec.endRotation) {
     rings = new RotateRings(ctx.camera, ctx.dom, { ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius, dragControl: ctx.dragControl });
     rings.setJoint(endObj);
+    rings.setOrientationCarry(endObj.parent ?? midObj); // FK 语义：端骨朝向相对中骨携带（弯肘/膝时腕/脚尖跟着相对转）
     rings.onPress = () => ctx.select(spec.name);
     ctx.scene.add(rings);
     // rootBone=端骨（链上最深）：深度排序保证定向在链 IK 摆位之后执行

@@ -32,12 +32,19 @@ function wrapPi(a: number): number {
  * 旋转操纵器（Maya Rotate Tool 的球系等价物）：三根轴环（绕骨自身 X/Y/Z 轴转）
  * + 一圈面向相机的视角环（绕视线轴转）。数学环命中——射线与环平面求交，
  * 命中点到环心距离落在环半径容差内即命中，不依赖 mesh raycast。
- * 本对象的世界四元数即「期望的骨骼全局朝向」：非拖拽时每帧从关节同步（跟随求解结果），
- * 拖拽时由用户写入；CopyTransformModifier(referenceObject: rings, copyRotation) 据此驱动骨骼。
+ * 本对象的世界四元数即「期望的骨骼全局朝向」：CopyTransformModifier(referenceObject: rings,
+ * copyRotation) 据此驱动骨骼。朝向来源两选一——
+ *  setOrientationCarry（FK 语义，掰骨控制点标配）：朝向 = 父骨世界朝向 × 局部偏移。
+ *    父骨（前臂/小腿/脊柱下节）转动时端骨跟着相对转动，不钉绝对世界朝向；
+ *    局部偏移初始 = 关节静止局部四元数，用户拖环时逐帧重捕；
+ *  默认（未设携带）：非拖拽时每帧从关节世界朝向同步（跟随求解结果）。
  */
 export class RotateRings extends Object3D {
   readonly ringRadius: number;
   private joint: Object3D | null = null;
+  // 朝向携带：carryParent 世界朝向 × localOffset = 环朝向；localOffset 只在设携带/拖环时改写
+  private carryParent: Object3D | null = null;
+  private readonly localOffset = new Quaternion();
   private dragging = false;
   private interactive = true;
   private readonly dom: DragDom;
@@ -120,6 +127,11 @@ export class RotateRings extends Object3D {
       // 世界空间：q = axisAngle(轴, 总角) × 起始朝向；写回父局部
       _q.setFromAxisAngle(this.dragAxis, this.totalDelta).multiply(this.startQuat);
       this.writeWorldQuat(_q);
+      // 朝向携带：拖环即重捕局部偏移（父骨朝向当前不变，offset = parent⁻¹ × rings）
+      if (this.carryParent) {
+        this.carryParent.getWorldQuaternion(_pq).invert();
+        this.localOffset.copy(_pq.multiply(_q));
+      }
     };
     this.onPointerUp = () => {
       this.dragging = false;
@@ -134,9 +146,24 @@ export class RotateRings extends Object3D {
     return this.dragging;
   }
 
-  /** 跟随的关节骨：每帧 update 把环心搬到关节世界位置；非拖拽时朝向同步关节 */
+  /** 跟随的关节骨：每帧 update 把环心搬到关节世界位置 */
   setJoint(joint: Object3D): void {
     this.joint = joint;
+  }
+
+  /** 朝向携带（FK 语义）：环朝向 = parent 世界朝向 × 局部偏移，父骨转动时端骨相对跟随。
+   *  局部偏移取调用瞬间的关节局部四元数（装配期 = rest）；调用即把环摆到关节当前朝向，
+   *  保证装配首解（rig.update(0) 先于首次 update()）CopyTransform 拿到的就是正确朝向 */
+  setOrientationCarry(parent: Object3D): void {
+    this.carryParent = parent;
+    if (!this.joint) return;
+    this.localOffset.copy(this.joint.quaternion);
+    this.joint.updateWorldMatrix(true, false);
+    this.joint.getWorldQuaternion(_q);
+    this.writeWorldQuat(_q);
+    this.joint.getWorldPosition(_c);
+    if (this.parent) this.parent.worldToLocal(_c);
+    this.position.copy(_c);
   }
 
   /** 模式切换用：非交互时 pointerdown 不响应（配合 setVisible 隐藏） */
@@ -148,8 +175,8 @@ export class RotateRings extends Object3D {
     this.visible = v;
   }
 
-  /** 每帧调用（求解之后）：跟随关节位置；非拖拽时朝向同步关节；视角环公告板化；
-   *  屏幕恒定大小（Maya 操纵器同款）：按相机距离缩放，ringRadius 是参照距离 3.5m 处的世界半径 */
+  /** 每帧调用（求解之后）：跟随关节位置；非拖拽时朝向 = 携带父骨 × 局部偏移（未设携带则同步关节）；
+   *  视角环公告板化；屏幕恒定大小（Maya 操纵器同款）：按相机距离缩放，ringRadius 是参照距离 3.5m 处的世界半径 */
   update(): void {
     if (this.joint) {
       this.joint.getWorldPosition(_c);
@@ -157,7 +184,11 @@ export class RotateRings extends Object3D {
       if (this.parent) this.parent.worldToLocal(_parentPos);
       this.position.copy(_parentPos);
       if (!this.dragging) {
-        this.joint.getWorldQuaternion(_q);
+        if (this.carryParent) {
+          this.carryParent.getWorldQuaternion(_q).multiply(this.localOffset);
+        } else {
+          this.joint.getWorldQuaternion(_q);
+        }
         this.writeWorldQuat(_q);
       }
     }

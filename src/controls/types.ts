@@ -8,7 +8,9 @@ import type { RotateRings } from './rotate-rings';
 export interface ControlsDefaults {
   /** 位置球可达半径倍率，默认 1 */
   reachScale?: number;
-  /** 带 pole 双骨链（四肢）的伸展上限：完全伸直时 pole 几何失效，96% 处留回旋空间让 pole 永远活着 */
+  /** 带 pole 双骨链（四肢）的伸展上限倍率，默认 1（不收缩）：PoleOrbit 恒把 pole 球钉在
+   *  ⊥ 链轴的轨道上，完全伸直时 roll 修正仍能把肘/膝方向带过退化点（实测弯→伸→弯稳定）；
+   *  <1 则永远保留一点弯度（0.96 会在短骨链上摆出肉眼可见的 15°+ 上臂/大腿摆角，慎用） */
   poleKeepAlive?: number;
   /** pole 球恒距半径（锥 min=max），默认 0.2 */
   poleRadius?: number;

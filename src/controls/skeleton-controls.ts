@@ -64,7 +64,7 @@ export class SkeletonControls {
       dragControl: options.dragControl,
       facing: (options.facing ?? new Vector3(0, 0, -1)).clone().normalize(),
       defaults: {
-        reachScale: 1, poleKeepAlive: 0.96, poleRadius: 0.2, poleAngleDeg: 100,
+        reachScale: 1, poleKeepAlive: 1, poleRadius: 0.2, poleAngleDeg: 100,
         lookAtRadius: 0.35, lookAtAngleDeg: 105, rootRadius: 0.4, ballRadius: 0.0225, ringRadius: 0.08,
         ...options.defaults,
       },

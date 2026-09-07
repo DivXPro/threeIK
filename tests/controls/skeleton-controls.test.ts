@@ -98,7 +98,7 @@ describe('createSkeletonControls', () => {
       rig, scene, camera, dom,
       controls: [
         // 手球摆到距肩 0.9（链长 0.6，keepAlive 0.96 → 钳到 0.576）
-        { kind: 'limb', name: 'arm', rootBone: 'ArmL', middleBone: 'ForeL', endBone: 'HandL', position: [0.25 + 0.9, 1.45, 0] },
+        { kind: 'limb', name: 'arm', rootBone: 'ArmL', middleBone: 'ForeL', endBone: 'HandL', position: [0.25 + 0.9, 1.45, 0], keepAlive: 0.96 },
       ],
     });
     scene.updateMatrixWorld(true);
@@ -180,7 +180,8 @@ describe('createSkeletonControls', () => {
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false },
+        // keepAlive 0.96 留弯度：完全伸直时膝钉在链轴上，绕轴转向不产生位移，测不出 pole 效果
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96 },
       ],
     });
     scene.updateMatrixWorld(true);
@@ -219,7 +220,7 @@ describe('createSkeletonControls', () => {
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, keepAlive: 0.96 }, // 留弯度才能测 pole 摆膝
       ],
     });
     scene.updateMatrixWorld(true);

@@ -33,8 +33,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
 
       // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 胸口/肩/脖子(直接掰骨)
       // → 双臂(肘 pole 朝后) → head(注视)。声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成。
-      // 初始化保持 T 姿势：位置球不设 position（缺省 = 端骨 rest 世界位置，零位移）；keepAlive 会把球
-      // 收到 96% 伸展处留一点弯度，pole 永远活着（完全伸直时肘落在肩→腕轴上，pole 在几何上零效应）
+      // 初始化保持 T 姿势：位置球不设 position（缺省 = 端骨 rest 世界位置，零位移）；keepAlive 默认 1
+      // （完全伸直）：pole 球恒 ⊥ 链轴，roll 修正把肘/膝方向带过退化点，四肢能真正伸直到 rest
       ctl = createSkeletonControls({
         rig,
         scene: ctx.scene,
@@ -108,12 +108,12 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         .map((n) => ctl!.get<BoneControlHandle>(n)!);
       const limbs = [legLH, legRH, armLH, armRH];
 
-      // 钳制参数。四肢伸展上限（poleKeepAlive）：完全伸直时肘/膝的可行解集从「两球交线圆」
-      // 退化成相切点，pole 失去选择自由——几何固有，非实现缺陷。96% 处仍留 ~6cm 回旋空间，
-      // pole 永远活着，肉眼读作"伸直"；滑到 1.0 可亲手体验退化点
+      // 钳制参数。四肢伸展上限（poleKeepAlive）：默认 1 = 完全伸直（pole 球恒 ⊥ 链轴，roll 修正
+      // 把肘/膝方向带过退化点——实测弯→伸→弯稳定）；滑到 <1 可体验「永远留弯度」的旧行为
+      // （注意 0.96 会在手臂这种短骨链上摆出 15°+ 上臂摆角，看起来像耸肩缩脖）
       const clampParams = {
         reachScale: 1,
-        poleKeepAlive: 0.96,
+        poleKeepAlive: 1,
         hipsRadius: 0.4,
         headRadius: 0.35, headAngleDeg: 105,
         poleRadius: 0.2,

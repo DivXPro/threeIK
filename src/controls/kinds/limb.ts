@@ -26,8 +26,8 @@ export interface LimbControlSpec extends ControlSpecBase {
   endBone: string;
   /** 端球可达半径倍率（默认 defaults.reachScale） */
   reachScale?: number;
-  /** pole 保活伸展上限（默认 defaults.poleKeepAlive）：完全伸直时 pole 几何失效（解集退化成点），
-   *  96% 处留回旋空间让 pole 永远活着，肉眼读作"伸直"；设为 1 可体验退化点 */
+  /** pole 保活伸展上限（默认 defaults.poleKeepAlive = 1，不收缩）：pole 球恒 ⊥ 链轴，
+   *  完全伸直时肘/膝方向由 roll 修正携带穿过退化点；<1 则钳球留弯度（如 0.96） */
   keepAlive?: number;
   /** 端球随 rootBone 携带，默认 true；钉地的脚设 false */
   carry?: boolean;

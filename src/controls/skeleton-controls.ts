@@ -53,6 +53,10 @@ export class SkeletonControls {
   private readonly ctx: ControlBuildContext;
   private manipulatorMode: ManipulatorMode = 'move';
   private selectedName: string | null = null;
+  /** 本轮 pointerdown 有操纵器 onPress 认领（选中/拖拽）；点空白失焦的判定标记 */
+  private pressClaimed = false;
+  private readonly dom: DragDom;
+  private readonly onDomPointerDown: () => void;
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
@@ -69,7 +73,7 @@ export class SkeletonControls {
         ...options.defaults,
       },
       bone: (name) => rig.getBoneAt(rig.boneIndex(name)),
-      select: (name) => this.select(name),
+      select: (name) => { this.pressClaimed = true; this.select(name); },
     };
 
     const built = options.controls.map((spec) => this.buildControl(spec));
@@ -84,6 +88,16 @@ export class SkeletonControls {
     // 否则携带偏移按 rest 捕获，姿势变化后球被甩飞
     rig.update(0);
     for (const c of built) c.postSolve();
+
+    // 点空白失焦：本监听器在全部操纵器之后注册（同一 dom 上监听器按注册顺序运行），
+    // 轮到它时本轮 pointerdown 若没有任何操纵器 onPress 认领，即点在空白处——取消选中。
+    // 三类操纵器（DragTarget/PoleOrbit/RotateRings）命中时都会先调 onPress，无需逐个查拖拽态
+    this.dom = options.dom;
+    this.onDomPointerDown = () => {
+      if (this.pressClaimed) { this.pressClaimed = false; return; }
+      this.select(null);
+    };
+    this.dom.addEventListener('pointerdown', this.onDomPointerDown);
   }
 
   /** 取参数调节句柄（按声明时的 name）；泛型收窄到具体句柄类型 */
@@ -124,6 +138,7 @@ export class SkeletonControls {
   }
 
   dispose(): void {
+    this.dom.removeEventListener('pointerdown', this.onDomPointerDown);
     for (const c of this.controls.values()) {
       for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
       c.dispose();

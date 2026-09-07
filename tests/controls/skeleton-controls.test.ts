@@ -404,6 +404,45 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
+  it('点空白失焦：pointerdown 无操纵器认领即取消选中；点中操纵器不失焦', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'root', name: 'hips', bone: 'Hips', rotation: true },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, pole: { guide: false } },
+      ],
+    });
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const blank = { clientX: 2, clientY: 2, pointerId: 1 }; // 画布角落：射线打不到任何操纵器
+
+    // 点球选中 → 点空白取消
+    dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('leg');
+    dom.fire('pointerup', {});
+    dom.fire('pointerdown', blank);
+    expect(ctl.getSelected()).toBe(null);
+    dom.fire('pointerup', {});
+
+    // 点中操纵器（pole 球）不失焦
+    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('leg');
+    dom.fire('pointerup', {});
+
+    // 标记点击（rotate 模式）同样算认领：选中后不被自己的 pointerdown 反取消
+    ctl.setManipulatorMode('rotate');
+    dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('leg');
+    expect(legH.target.isDragging).toBe(false); // 标记：只选中不拖拽
+    dom.fire('pointerup', {});
+    // 空白点击在 rotate 模式也失焦
+    dom.fire('pointerdown', blank);
+    expect(ctl.getSelected()).toBe(null);
+    dom.fire('pointerup', {});
+    ctl.dispose();
+  });
+
   it('旋转通道：拖环写 rings 朝向，CopyTransform 把端骨全局旋转对齐过去（①脚朝向）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);

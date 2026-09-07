@@ -4,8 +4,15 @@ import type { DragControl, DragDom, DragPointerEvent } from './drag-target';
 // 与 DragTarget/RotateRings 同款命中容差：按相机距离换算的世界容差，让小球在屏幕上可点
 const HIT_TOLERANCE_PER_METER = 0.011;
 
+// 球离链轴的最小显示半径：手臂完全伸直时中骨关节钉在轴上（实测半径 0），球仍留 2cm 偏移——
+// ① 球不埋进手臂网格、看得见点得着；② poleTarget 的投影方向恒非零，求解器的方向通道不断线
+const MIN_POLE_RADIUS = 0.02;
+
+// 径向拖拽死区（米）：纯调朝向的拖动附带亚毫米级半径噪声，小于死区不触发弯度回调（手球不抖）
+const RADIUS_DRAG_DEADZONE = 1e-3;
+
 const _axis = new Vector3();   // 链轴（根骨→端球，世界系单位向量）
-const _center = new Vector3(); // 轨道中心 = 中骨关节世界位置
+const _center = new Vector3(); // 环心 = 链轴上离根 axisOffset 的投影点（中骨关节的轴上垂足）
 const _hit = new Vector3();
 const _w = new Vector3();
 const _ndc = new Vector2();
@@ -14,25 +21,37 @@ const _ray = new Raycaster();
 const _q = new Quaternion(); // 父世界四元数的逆（世界方向 → 父局部）
 
 /**
- * pole 转向操纵器（轨道球）：球以固定半径待在「中骨关节为心、⊥「根骨→端球」链轴」的
- * 轨道圆上——这个圆就是肘/膝真实能转的轨迹（弯度不变时中骨关节绕链轴的圆）。
- * 拖球 = 球沿轨道滑（离轨道的拖动被吸回轨道面），肘/膝随球转向；球的位置完全由
- * 「轨道中心 + 链轴 + 轨道上方向」逐帧推出，身体移动时自动跟随，无需携带偏移。
+ * pole 双通道操纵器（肘/膝影子球）：球贴在「中骨关节在 ⊥ 链轴平面上的影子」处——
+ * 环心 = 中骨关节的轴上垂足（随姿势逐帧由 setOrbitFrame 推送），球半径 = 关节离轴距离。
+ * 拖球两个通道一次手势完成：
+ *   角度通道（绕链轴转）= 肘/膝朝向——球在环上的角度即关节绕轴方向（Maya pole vector 同款）；
+ *   径向通道（离轴远近）= 弯度——外拽更弯、推回轴心伸直（onRadiusDrag 回调由装配层移动端球实现，
+ *   手会跟着动；反过来拖端球仍是 IK，球自动滑回实测半径，兼作弯度仪表）。
  * 纯位置控制点：不参与 W/E 操纵器模式切换，两种模式都常驻可用。
- * 暴露的 ball 即 TwoBoneIK 的 poleTarget（求解器只读其世界位置）。
+ * 暴露的 ball 即 TwoBoneIK 的 poleTarget（求解器只读其世界位置投影出的方向）。
  *
- * 轨道上方向（世界系）只在拖球/方向提示时改写，绝不把逐帧投影残差写回——写回会让
+ * 角度方向的持久状态（dir）只在拖球/方向提示时改写，绝不把逐帧投影残差写回——写回会让
  * 链轴扫过方向附近时的小残差归一化成任意垂直方向并累积（随机游走），手臂大幅挥动后
  * 方向漂到链轴错误一侧（手横到胸前时肘翻到身前，「反肘」）。逐帧落位只做投影不重写；
- * 投影退化（轴≈方向）时用上次落位方向兜底。
+ * 投影退化（轴≈方向）时用上次落位方向兜底。径向则无此问题：空闲时直接同步实测半径。
  */
 export class PoleOrbit extends Object3D {
-  /** 轨道上的球（TwoBoneIK poleTarget / 引导线端点都读它） */
+  /** 影子球（TwoBoneIK poleTarget 读它的世界位置） */
   readonly ball: Mesh;
   readonly ballRadius: number;
   private readonly material: MeshBasicMaterial;
-  private orbitRadius: number;
+  /** 球半径（世界米）：拖拽中 = 用户意图；空闲 = 实测关节离轴距离（setOrbitFrame 推送） */
+  private orbitRadius = 0;
+  /** 环心在链轴上离根骨的距离（世界米）：逐帧由 setOrbitFrame 推送（拖拽中也更新，跟随弯度变化） */
+  private axisOffset = 0;
   private dragging = false;
+  private lastDragRadius = 0; // 拖拽死区基准（按下时取显示半径）
+  // 拖拽期间冻结的参照架（按下瞬间的环心/链轴）：角度通道的命中面 + 径向通道的直线锚点。
+  // 不能逐帧跟活架——径向拖动会移动端球改变弯度，环心沿轴滑动、命中面跟着挪，视线贴近
+  // 环面（掠射）时命中点沿射线暴走，半径意图自我放大直奔钳制上限（实测 38px 拖动打满弯度）。
+  // 拖拽中链轴方向不变（端球只沿轴滑），冻结架的两通道都稳定
+  private readonly dragCenter = new Vector3();
+  private readonly dragAxis = new Vector3();
   private readonly dom: DragDom;
   private readonly camera: Camera;
   private readonly dragControl?: DragControl;
@@ -40,26 +59,26 @@ export class PoleOrbit extends Object3D {
   private readonly onPointerDown: (e: DragPointerEvent) => void;
   private readonly onPointerMove: (e: DragPointerEvent) => void;
   private readonly onPointerUp: () => void;
-  // 轨道中心/链轴来源（bind 注入）：中心 = anchor 世界位置；链轴 = axisFrom→axisTo（端球而非端骨——
-  // 端球被可达钳制收拢过，与求解器实际摆出的链一致）
-  private anchor: Object3D | null = null;
+  // 链轴来源（bind 注入）：axisFrom（根骨）→ axisTo（端球——端球被可达钳制收拢过，与求解器实际摆出的链一致）
   private axisFrom: Object3D | null = null;
   private axisTo: Object3D | null = null;
-  /** 轨道上方向（世界系，持久状态）：只在拖球/方向提示时改写；逐帧落位做投影但不写回（防残差漂移） */
+  /** 环上方向（世界系，持久状态）：只在拖球/方向提示时改写；逐帧落位做投影但不写回（防残差漂移） */
   private readonly dir = new Vector3(0, 0, 1);
   /** 上次实际落位的世界方向：dir 与链轴近乎平行（投影退化）时的兜底，保持落位连续 */
   private readonly placedDir = new Vector3(0, 0, 1);
   private dirHint: Vector3 | null = null; // 首帧前的初始方向来源（spec 位置或默认摆位）
-  /** 命中按下时触发（选中机制用；装配器据此选中所属控制点） */
+  /** 命中按下时触发（选中机制用；装配器据此认领按下防空白失焦） */
   onPress?: () => void;
+  /** 径向通道（弯度）：拖拽中半径意图变化超死区时回调（装配层据此沿链轴移动端球）。
+   *  角度通道无需回调——求解器下一帧直接读球的世界位置 */
+  onRadiusDrag?: (radius: number) => void;
 
-  constructor(camera: Camera, dom: DragDom, options: { color?: number; ballRadius?: number; radius?: number; dragControl?: DragControl } = {}) {
+  constructor(camera: Camera, dom: DragDom, options: { color?: number; ballRadius?: number; dragControl?: DragControl } = {}) {
     super();
     this.camera = camera;
     this.dom = dom;
     this.dragControl = options.dragControl;
     this.ballRadius = options.ballRadius ?? 0.0225;
-    this.orbitRadius = options.radius ?? 0.2;
 
     this.material = new MeshBasicMaterial({ color: options.color ?? 0xffcc00, depthTest: false, transparent: true, opacity: 0.9 });
     this.ball = new Mesh(new SphereGeometry(this.ballRadius, 20, 14), this.material);
@@ -67,12 +86,14 @@ export class PoleOrbit extends Object3D {
     this.add(this.ball);
 
     this.onPointerDown = (e) => {
-      if (!this.visible || !this.anchor) return;
+      if (!this.visible || !this.axisFrom) return;
       this.setRay(e);
       this.ball.getWorldPosition(_center);
       if (_ray.ray.distanceToPoint(_center) > this.ballRadius + this.camera.position.distanceTo(_center) * HIT_TOLERANCE_PER_METER) return;
       this.onPress?.();
       this.dragging = true;
+      this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS); // 死区基准与球的显示位置一致
+      if (this.frame(this.dragCenter, this.dragAxis)) { /* 冻结拖拽参照架 */ }
       this.dom.setPointerCapture(e.pointerId);
       if (this.dragControl) {
         this.dragControl.lock();
@@ -80,15 +101,36 @@ export class PoleOrbit extends Object3D {
       }
     };
     this.onPointerMove = (e) => {
-      if (!this.dragging || !this.frame(_center, _axis)) return;
+      if (!this.dragging) return;
       this.setRay(e);
-      _plane.setFromNormalAndCoplanarPoint(_axis, _center);
+      // 角度通道：冻结架（按下时的环心/链轴）平面命中取方向。不能用逐帧活架——径向拖动
+      // 移动端球改变弯度，环心沿轴滑动、命中面跟挪，掠射（视线贴环面）时命中点沿射线
+      // 暴走，半径意图自我放大直奔钳制上限（实测 38px 拖动打满弯度）
+      _plane.setFromNormalAndCoplanarPoint(this.dragAxis, this.dragCenter);
       if (!_ray.ray.intersectPlane(_plane, _hit)) return;
-      // 吸回轨道面：命中点去轴向分量即轨道上方向（链轴几乎 ⊥ 视线时命中很远，方向仍然有效）
-      _w.copy(_hit).sub(_center);
-      _w.addScaledVector(_axis, -_w.dot(_axis));
-      if (_w.lengthSq() < 1e-10) return;
-      this.dir.copy(_w.normalize());
+      _w.copy(_hit).sub(this.dragCenter);
+      _w.addScaledVector(this.dragAxis, -_w.dot(this.dragAxis));
+      if (_w.lengthSq() >= 1e-12) this.dir.copy(_w.normalize());
+      // 径向通道：射线与「过冻结环心、沿当前方向」的径向直线求线-线最近点，参量 t 即半径
+      // 意图。平面命中测半径在掠射视角发散；线-线最近点处处有界（射线近乎平行径向线时
+      // 本帧跳过——与 Maya 轴约束在顺轴视角失效同款取舍）
+      const rd = _ray.ray.direction;
+      _w.copy(_ray.ray.origin).sub(this.dragCenter); // w0 = O − C（线-线最近点标准式）
+      const b = rd.dot(this.dir);
+      const denom = 1 - b * b;
+      if (denom > 1e-10) {
+        const d = _w.dot(rd);
+        const e2 = _w.dot(this.dir);
+        const t = (e2 - b * d) / denom; // 径向直线上的参量 = 半径意图
+        if (t * b - d > 0) { // 最近点在射线前方才采纳（s = t·b − d）
+          const radius = Math.max(0, t);
+          this.orbitRadius = radius;
+          if (Math.abs(radius - this.lastDragRadius) > RADIUS_DRAG_DEADZONE) {
+            this.lastDragRadius = radius;
+            this.onRadiusDrag?.(radius);
+          }
+        }
+      }
       this.place();
     };
     this.onPointerUp = () => {
@@ -104,19 +146,25 @@ export class PoleOrbit extends Object3D {
     return this.dragging;
   }
 
-  /** 绑定轨道中心/链轴来源：anchor = 中骨关节，链轴 = axisFrom（根骨）→ axisTo（端球） */
-  bind(anchor: Object3D, axisFrom: Object3D, axisTo: Object3D): void {
-    this.anchor = anchor;
+  /** 绑定链轴来源：axisFrom = 根骨，axisTo = 端球（环心 = 轴上 axisOffset 处，由 setOrbitFrame 推送） */
+  bind(axisFrom: Object3D, axisTo: Object3D): void {
     this.axisFrom = axisFrom;
     this.axisTo = axisTo;
   }
 
-  /** 初始方向提示（世界位置，通常是 spec.pole.position）：首帧投影 ⊥ 链轴后作为轨道上方向 */
+  /** 逐帧推送轨道几何（装配层按链三角实测）：d = 中骨关节垂足离根骨的轴向距离，r = 关节离轴半径。
+   *  拖拽中只更新环心（半径是用户意图，不被实测值覆盖）；空闲时半径同步实测——球即弯度仪表 */
+  setOrbitFrame(d: number, r: number): void {
+    this.axisOffset = d;
+    if (!this.dragging) this.orbitRadius = r;
+  }
+
+  /** 初始方向提示（世界位置，通常是 spec.pole.position）：首帧投影 ⊥ 链轴后作为环上方向 */
   setDirectionHint(worldPos: Vector3): void {
     this.dirHint = worldPos.clone();
   }
 
-  /** 编程式设轨道上方向（世界向量，不必 ⊥ 链轴，内部投影）；自动化测试/外部绑定用 */
+  /** 编程式设环上方向（世界向量，不必 ⊥ 链轴，内部投影）；自动化测试/外部绑定用 */
   setDirection(worldDir: Vector3): void {
     if (!this.frame(_center, _axis)) return;
     _w.copy(worldDir);
@@ -126,13 +174,7 @@ export class PoleOrbit extends Object3D {
     this.place();
   }
 
-  /** 轨道半径 = 球到肘/膝的固定距离（原 poleRadius 语义） */
-  setOrbitRadius(r: number): void {
-    this.orbitRadius = r;
-    this.place();
-  }
-
-  /** 每帧调用（求解之后）：轨道中心/链轴跟随，球按持久方向重新落位 */
+  /** 每帧调用（求解之后）：环心/链轴跟随，球按持久方向与当前半径重新落位 */
   update(): void {
     if (this.dirHint && this.frame(_center, _axis)) {
       _w.copy(this.dirHint).sub(_center);
@@ -154,18 +196,18 @@ export class PoleOrbit extends Object3D {
     this.removeFromParent();
   }
 
-  /** 读当前轨道中心/链轴（世界系）；链轴退化（端球压在根骨上）时返回 false，本帧不动 */
+  /** 读当前环心/链轴（世界系）；链轴退化（端球压在根骨上）时返回 false，本帧不动 */
   private frame(center: Vector3, axis: Vector3): boolean {
-    if (!this.anchor || !this.axisFrom || !this.axisTo) return false;
-    this.anchor.getWorldPosition(center);
-    this.axisFrom.getWorldPosition(_w);
-    this.axisTo.getWorldPosition(axis).sub(_w);
+    if (!this.axisFrom || !this.axisTo) return false;
+    this.axisFrom.getWorldPosition(center);
+    this.axisTo.getWorldPosition(axis).sub(center);
     if (axis.lengthSq() < 1e-10) return false;
     axis.normalize();
+    center.addScaledVector(axis, this.axisOffset);
     return true;
   }
 
-  /** 按持久状态落位：中心 = 中骨关节，球 = 中心 + 半径 ×（持久方向 ⊥ 链轴的投影）。
+  /** 按持久状态落位：球 = 环心 + max(半径, MIN_POLE_RADIUS) ×（持久方向 ⊥ 链轴的投影）。
    *  投影结果不写回 dir（防小残差归一化后累积漂移）；dir 与链轴近乎平行时用上次落位
    *  方向兜底。本体不旋转，球的世界偏移直接是方向×半径——父带旋转时用父世界四元数的逆换算回局部 */
   private place(): void {
@@ -180,13 +222,14 @@ export class PoleOrbit extends Object3D {
     }
     _w.normalize();
     this.placedDir.copy(_w);
+    const r = Math.max(this.orbitRadius, MIN_POLE_RADIUS);
     if (this.parent) {
       this.position.copy(this.parent.worldToLocal(_center));
       this.parent.getWorldQuaternion(_q).invert();
-      this.ball.position.copy(_w).applyQuaternion(_q).multiplyScalar(this.orbitRadius);
+      this.ball.position.copy(_w).applyQuaternion(_q).multiplyScalar(r);
     } else {
       this.position.copy(_center);
-      this.ball.position.copy(_w).multiplyScalar(this.orbitRadius);
+      this.ball.position.copy(_w).multiplyScalar(r);
     }
   }
 

@@ -77,7 +77,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('方向型球恒距贴身：pole/注视球与锚骨距离恒为半径', () => {
+  it('方向型球贴身：pole 球贴肘（弯度仪表）、注视球恒距半径', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -91,7 +91,8 @@ describe('createSkeletonControls', () => {
     const fore = rig.getBoneAt(rig.boneIndex('ForeL'));
     const neck = rig.getBoneAt(rig.boneIndex('Neck'));
     const arm = ctl.get<LimbControlHandle>('arm')!;
-    expect(arm.pole.ball.getWorldPosition(new Vector3()).distanceTo(fore.getWorldPosition(new Vector3()))).toBeCloseTo(0.2, 5);
+    // 臂 rest 伸直：肘钉在链轴上，pole 球贴着肘（仅最小显示偏移 0.02）
+    expect(arm.pole.ball.getWorldPosition(new Vector3()).distanceTo(fore.getWorldPosition(new Vector3()))).toBeLessThan(0.03);
     expect(ctl.get('head')!.target!.getWorldPosition(new Vector3()).distanceTo(neck.getWorldPosition(new Vector3()))).toBeCloseTo(0.35, 5);
     ctl.dispose();
   });
@@ -168,7 +169,7 @@ describe('createSkeletonControls', () => {
       rig, scene, camera, dom,
       controls: [
         { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL' },
-        { kind: 'limb', name: 'legNoRoll', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', poleDirection: 'none', pole: { guide: false } },
+        { kind: 'limb', name: 'legNoRoll', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', poleDirection: 'none' },
       ],
     });
     const readCfg = (name: string) =>
@@ -179,7 +180,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 轨道球·拖球沿环滑调肘朝向——端球不动、弯度不变、膝绕轴转向 pole', () => {
+  it('pole 双通道·角度：拖球沿环滑调肘朝向——端球不动、弯度不变、膝绕轴转向 pole', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -197,29 +198,33 @@ describe('createSkeletonControls', () => {
     const targetBefore = legH.target.position.clone();
     const midBefore = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
 
-    // 真指针拖球沿环到 +x 侧：环心 = 膝(0.1,0.6,0)、环面 ⊥ 链轴(≈-Y) 即水平面、半径 0.2
+    // 真指针拖球沿环滑（半径不变 = 纯角度通道）：环心 A = 球的轴上垂足，拖到绕轴 +90° 的等半径点（+x 侧）
+    const hip = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const axis = legH.target.getWorldPosition(new Vector3()).sub(hip).normalize();
     const ballPos = legH.pole.ball.getWorldPosition(new Vector3());
+    const centerA = hip.clone().addScaledVector(axis, ballPos.clone().sub(hip).dot(axis));
+    const ringP = ballPos.clone().sub(centerA)
+      .applyQuaternion(new Quaternion().setFromAxisAngle(axis, Math.PI / 2))
+      .add(centerA);
     dom.fire('pointerdown', clientFor(camera, ballPos));
     expect(legH.pole.isDragging).toBe(true);
-    dom.fire('pointermove', clientFor(camera, new Vector3(0.3, 0.6, 0))); // 环上 +x 点（在环面上，射线命中精确）
+    dom.fire('pointermove', clientFor(camera, ringP));
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
 
-    // Maya 语义：pole 只管朝向——端球（弯度的唯一来源）纹丝不动，膝绕链轴摆到 +x 侧
+    // 角度通道：pole 只管朝向——端球（弯度未变）纹丝不动，膝绕链轴摆到 +x 侧
     expect(legH.target.position.distanceTo(targetBefore)).toBeLessThan(1e-6);
     const midPos = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
     expect(midPos.x).toBeGreaterThan(midBefore.x + 0.02);
-    // 球被吸回环上：与环心（膝）同处环面（y 相等）、距环心恒为半径 0.2
-    const ballAfter = legH.pole.ball.getWorldPosition(new Vector3());
-    expect(ballAfter.y).toBeCloseTo(midPos.y, 5);
-    expect(ballAfter.distanceTo(midPos)).toBeCloseTo(0.2, 5);
+    // 球是肘/膝的影子：与膝关节基本重合
+    expect(legH.pole.ball.getWorldPosition(new Vector3()).distanceTo(midPos)).toBeLessThan(0.03);
     dom.fire('pointerup', {});
     expect(legH.pole.isDragging).toBe(false);
     ctl.dispose();
   });
 
-  it('pole 轨道球·rotate 模式：pole 是纯位置控制点不收起，拖球照常沿环调肘朝向（端球不动）', () => {
+  it('pole 双通道·rotate 模式：pole 是纯位置控制点不收起，拖球照常沿环调肘朝向（端球不动）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -242,10 +247,17 @@ describe('createSkeletonControls', () => {
     expect(legH.rings!.visible).toBe(false);
     expect(legH.pole.ball.visible).toBe(true);
 
-    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
+    const ballPos = legH.pole.ball.getWorldPosition(new Vector3());
+    const hip = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const axis = legH.target.getWorldPosition(new Vector3()).sub(hip).normalize();
+    const centerA = hip.clone().addScaledVector(axis, ballPos.clone().sub(hip).dot(axis));
+    const ringP = ballPos.clone().sub(centerA)
+      .applyQuaternion(new Quaternion().setFromAxisAngle(axis, Math.PI / 2))
+      .add(centerA);
+    dom.fire('pointerdown', clientFor(camera, ballPos));
     expect(legH.pole.isDragging).toBe(true);
-    // 与 move 模式同一拖法：球沿环到 +x 侧 → 膝转向 +x，端球（弯度唯一来源）不动
-    dom.fire('pointermove', clientFor(camera, new Vector3(0.3, 0.6, 0)));
+    // 与 move 模式同一拖法：球沿环到 +x 侧（半径不变 = 纯角度）→ 膝转向 +x，端球（弯度未变）不动
+    dom.fire('pointermove', clientFor(camera, ringP));
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
@@ -258,7 +270,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 轨道球·离环拖动被吸回环面：球恒在环上（距环心=半径、轴向分量≈0）', () => {
+  it('pole 双通道·径向拖 = 弯度：外拽手收回膝弯出（朝向不变），推回轴心腿伸直', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -272,22 +284,39 @@ describe('createSkeletonControls', () => {
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
+    const hip = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const axis = () => legH.target.getWorldPosition(new Vector3()).sub(hip).normalize();
+    /** 点在链轴上的垂足（球/膝 ⊥ 轴，垂足即环心） */
+    const footOnAxis = (p: Vector3) => hip.clone().addScaledVector(axis(), p.clone().sub(hip).dot(axis()));
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
 
-    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
+    // rest 腿伸直：膝钉在链轴上，球贴着膝（仅最小显示偏移 0.02）
+    const ball0 = legH.pole.ball.getWorldPosition(new Vector3());
+    expect(ball0.distanceTo(knee())).toBeLessThan(0.03);
+
+    // 径向外拽 0.15：手沿链轴收到 D(ρ)=2√(0.4²−0.15²)≈0.742，膝向 pole 侧（-z）弯出、不甩向
+    const center0 = footOnAxis(ball0); // 冻结环心（径向通道的直线锚点）
+    const outDir = ball0.clone().sub(center0).normalize(); // 球的离轴方向
+    dom.fire('pointerdown', clientFor(camera, ball0));
     expect(legH.pole.isDragging).toBe(true);
-    // 朝远离环面的方向拖（往地面 +z 远处拽；视线会穿过 y≈0.6 环面，命中点投回环面取方向）
-    dom.fire('pointermove', clientFor(camera, new Vector3(0.1, 0, 0.5)));
-    rig.update(0);
-    ctl.update();
-    scene.updateMatrixWorld(true);
+    dom.fire('pointermove', clientFor(camera, center0.clone().addScaledVector(outDir, 0.15)));
+    converge();
+    expect(legH.target.getWorldPosition(new Vector3()).distanceTo(hip)).toBeCloseTo(2 * Math.sqrt(0.16 - 0.0225), 3);
+    const midBent = knee();
+    expect(midBent.z).toBeLessThan(-0.08);                // 弯出到 pole 侧
+    expect(Math.abs(midBent.x - 0.1)).toBeLessThan(0.03); // 不甩向：仍在原弯面内
+    // 球贴着膝（弯度仪表）：TwoBone 是解析解，实测半径即用户意图
+    expect(legH.pole.ball.getWorldPosition(new Vector3()).distanceTo(midBent)).toBeLessThan(0.05);
 
-    const center = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
-    const ball = legH.pole.ball.getWorldPosition(new Vector3());
-    const off = ball.clone().sub(center);
-    expect(off.length()).toBeCloseTo(0.2, 5);       // 恒距：球在环上
-    expect(off.y).toBeCloseTo(0, 5);                 // 环面 ⊥ 链轴(≈-Y)：轴向分量吸到 0
-    expect(off.z).toBeGreaterThan(0.1);              // 方向仍然跟手（拽向 +z 侧，球转去 +z）
+    // 推回轴心（瞄准冻结环心 = 径向直线零点）：手伸到全可达 0.8，腿伸直（膝回链轴）
+    dom.fire('pointermove', clientFor(camera, center0));
     dom.fire('pointerup', {});
+    converge();
+    expect(legH.target.getWorldPosition(new Vector3()).distanceTo(hip)).toBeCloseTo(0.8, 3);
+    const midStraight = knee();
+    expect(midStraight.clone().sub(footOnAxis(midStraight)).length()).toBeLessThan(0.02);
+    expect(legH.pole.isDragging).toBe(false);
     ctl.dispose();
   });
 
@@ -353,7 +382,7 @@ describe('createSkeletonControls', () => {
       rig, scene, camera, dom,
       controls: [
         { kind: 'root', name: 'hips', bone: 'Hips', rotation: true },
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, pole: { guide: false } },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
         { kind: 'chain', name: 'spine', rootBone: 'Spine', endBone: 'Neck' }, // 纯位置：不参战
       ],
     });
@@ -417,7 +446,7 @@ describe('createSkeletonControls', () => {
       rig, scene, camera, dom,
       controls: [
         { kind: 'root', name: 'hips', bone: 'Hips', rotation: true },
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, pole: { guide: false } },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
       ],
     });
     const legH = ctl.get<LimbControlHandle>('leg')!;
@@ -484,7 +513,7 @@ describe('createSkeletonControls', () => {
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, pole: { guide: false } },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
       ],
     });
     const legH = ctl.get<LimbControlHandle>('leg')!;
@@ -521,7 +550,7 @@ describe('createSkeletonControls', () => {
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, pole: { guide: false } },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
       ],
     });
     const legH = ctl.get<LimbControlHandle>('leg')!;

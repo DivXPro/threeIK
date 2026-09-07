@@ -12,10 +12,6 @@ export interface ControlsDefaults {
    *  ⊥ 链轴的轨道上，完全伸直时 roll 修正仍能把肘/膝方向带过退化点（实测弯→伸→弯稳定）；
    *  <1 则永远保留一点弯度（0.96 会在短骨链上摆出肉眼可见的 15°+ 上臂/大腿摆角，慎用） */
   poleKeepAlive?: number;
-  /** pole 球恒距半径（锥 min=max），默认 0.2 */
-  poleRadius?: number;
-  /** pole 方向锥半角（°），默认 100 */
-  poleAngleDeg?: number;
   /** 注视球恒距半径，默认 0.35（下限 0.3：CCD 端骨离颈 ~0.12m，再近注视退化成摆放端骨） */
   lookAtRadius?: number;
   /** 注视方向锥半角（°），默认 105 */

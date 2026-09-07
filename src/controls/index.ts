@@ -3,7 +3,6 @@ export type { DragControl, DragDom, DragPointerEvent } from './drag-target';
 export { PoleOrbit } from './pole-orbit';
 export { RotateRings } from './rotate-rings';
 export { measureChain } from './measure-chain';
-export { PoleGuide } from './guides';
 export { SkeletonControls, createSkeletonControls } from './skeleton-controls';
 export type { SkeletonControlsOptions, ControlPointSpec, BuiltinControlSpec } from './skeleton-controls';
 export { registerControlKind } from './registry';

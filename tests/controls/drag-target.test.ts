@@ -160,6 +160,36 @@ describe('DragTarget', () => {
     dom.fire('pointerup', {});
   });
 
+  it('轴箭头高亮：hover 变色、移开恢复、拖拽期间保持、抬起复位', () => {
+    const camera = makeCamera();
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    t.setSelected(true);
+    // 读实例级箭头材质（私有字段，测试经箭头组子节点取 shaft 材质）
+    const matOf = (i: number) => {
+      const g = (t as unknown as { arrowsGroup: Object3D }).arrowsGroup;
+      const arrow = g.children[i] as Object3D;
+      return (arrow.children[0] as unknown as { material: { color: { getHex(): number } } }).material;
+    };
+    const baseX = matOf(0).color.getHex();
+    const baseY = matOf(1).color.getHex();
+    // hover X 杆 → X 变色，Y 不变
+    dom.fire('pointermove', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(matOf(0).color.getHex()).not.toBe(baseX);
+    expect(matOf(1).color.getHex()).toBe(baseY);
+    // 移到无箭头处 → 恢复
+    dom.fire('pointermove', clientFor(camera, new Vector3(-0.4, 0.9, 0)));
+    expect(matOf(0).color.getHex()).toBe(baseX);
+    // 拖 X 轴期间保持高亮（指针已不在杆上也保持）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    dom.fire('pointermove', clientFor(camera, new Vector3(1.0, 0.5, 0)));
+    expect(matOf(0).color.getHex()).not.toBe(baseX);
+    // 抬起复位
+    dom.fire('pointerup', {});
+    expect(matOf(0).color.getHex()).toBe(baseX);
+  });
+
   it('轴箭头随球显隐（rotate 模式隐藏后不可命中）', () => {
     const camera = makeCamera();
     const dom = makeDomStub();

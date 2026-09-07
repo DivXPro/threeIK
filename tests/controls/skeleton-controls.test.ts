@@ -231,9 +231,9 @@ describe('createSkeletonControls', () => {
     const targetBefore = legH.target.position.clone();
 
     ctl.setManipulatorMode('rotate');
-    // 端球藏、端骨环上场；pole 不参战：环+球仍显示、球仍可拖
-    expect(legH.target.ball.visible).toBe(false);
-    expect(legH.rings!.visible).toBe(true);
+    // 端球退化成可点标记（不藏）；端骨环只在选中后上场（未选中）；pole 不参战：球仍显示、可拖
+    expect(legH.target.ball.visible).toBe(true);
+    expect(legH.rings!.visible).toBe(false);
     expect(legH.pole.ball.visible).toBe(true);
 
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
@@ -368,13 +368,23 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
 
-    // rotate：双通道控制点球藏、环上；pole 是纯位置控制点，不收起、照常可拖
+    // rotate：双通道控制点的球退化成可点标记（不藏、不可拖）；环只在选中后上场；
+    // pole 是纯位置控制点，不收起、照常可拖
     ctl.setManipulatorMode('rotate');
-    expect(hipsH.rings!.visible).toBe(true);
-    expect(legH.target.ball.visible).toBe(false);
+    expect(hipsH.rings!.visible).toBe(false); // 未选中：环不上场
+    expect(legH.target.ball.visible).toBe(true); // 球变标记，不藏
     expect(legH.pole.ball.visible).toBe(true);
-    dom.fire('pointerdown', clientFor(camera, hipsH.target.getWorldPosition(new Vector3())));
-    expect(hipsH.target.isDragging).toBe(false);
+    // 标记点击 = 选中，不进入拖拽；选中后该控制点的环上场
+    dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
+    expect(legH.target.isDragging).toBe(false);
+    expect(ctl.getSelected()).toBe('leg');
+    expect(legH.rings!.visible).toBe(true);
+    dom.fire('pointerup', {});
+    // 换选别的控制点：旧环收起、新环上场
+    ctl.select('hips');
+    expect(legH.rings!.visible).toBe(false);
+    expect(hipsH.rings!.visible).toBe(true);
+    // 选中后拖环照常
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0, 0.08, 0))));
     expect(hipsH.rings!.isDragging).toBe(true);
     dom.fire('pointerup', {});
@@ -405,8 +415,9 @@ describe('createSkeletonControls', () => {
     const legH = ctl.get<LimbControlHandle>('leg')!;
     const foot = rig.getBoneAt(rig.boneIndex('FootL'));
     const before = foot.getWorldQuaternion(new Quaternion());
-    // 真指针拖环：rotate 模式下绕世界 Y 转 90°
+    // 真指针拖环：rotate 模式 + 选中后绕世界 Y 转 90°
     ctl.setManipulatorMode('rotate');
+    ctl.select('leg'); // 环只在选中后上场（Maya 同款：只显示选中的操纵器）
     scene.updateMatrixWorld(true);
     const center = legH.rings!.getWorldPosition(new Vector3());
     dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
@@ -435,6 +446,9 @@ describe('createSkeletonControls', () => {
     scene.updateMatrixWorld(true);
     const center = hipsH.rings!.getWorldPosition(new Vector3());
     dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
+    expect(hipsH.rings!.isDragging).toBe(false); // 未选中：环不上场、不可命中
+    ctl.select('hips'); // 选中后环上场
+    dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
     dom.fire('pointermove', clientFor(camera, center.clone().add(new Vector3(0, 0, -0.08))));
     dom.fire('pointerup', {});
     const posBefore = rig.getBoneAt(rig.boneIndex('Hips')).getWorldPosition(new Vector3());
@@ -458,20 +472,27 @@ describe('createSkeletonControls', () => {
     const spine = rig.getBoneAt(rig.boneIndex('Spine'));
     const neck = rig.getBoneAt(rig.boneIndex('Neck'));
     expect(chestH.kind).toBe('bone');
-    expect(ctl.targets.length).toBe(0); // 旋转专用：没有位置球
+    expect(ctl.targets.length).toBe(1); // 没有位置球，但有一颗常驻标记球（选中入口）
 
-    // move 模式（默认）：环隐藏、不可命中
+    // move 模式（默认）：环隐藏、不可命中；标记球常驻两种模式
     expect(chestH.rings.visible).toBe(false);
+    expect(chestH.marker.ball.visible).toBe(true);
     const neckBefore = neck.getWorldPosition(new Vector3());
     scene.updateMatrixWorld(true);
     const center = chestH.rings.getWorldPosition(new Vector3());
     dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
     expect(chestH.rings.isDragging).toBe(false);
 
-    // rotate 模式：环上场，拖 X 环绕世界 X 转（Spine 正上方是 Neck，绕 Y 转是原地打转看不出位移，
-    // 绕 X 转 Neck 才会被带起来）；取 30°→120° 非基向弧点（基向点同时落在两环平面上，浮点定胜负）
+    // rotate 模式：环仍要选中后才上场——点标记球选中（标记不可拖，按下即选中）
     ctl.setManipulatorMode('rotate');
+    expect(chestH.rings.visible).toBe(false);
+    dom.fire('pointerdown', clientFor(camera, chestH.marker.getWorldPosition(new Vector3())));
+    expect(chestH.marker.isDragging).toBe(false);
+    expect(ctl.getSelected()).toBe('chest');
     expect(chestH.rings.visible).toBe(true);
+    dom.fire('pointerup', {});
+    // 拖 X 环绕世界 X 转（Spine 正上方是 Neck，绕 Y 转原地打转看不出位移，绕 X 转 Neck 才被带起来）；
+    // 取 30°→120° 非基向弧点（基向点同时落在两环平面上，浮点定胜负）
     const arc = (deg: number) => center.clone().add(
       new Vector3(0, 0.08 * Math.cos(deg * Math.PI / 180), 0.08 * Math.sin(deg * Math.PI / 180)));
     dom.fire('pointerdown', clientFor(camera, arc(30)));

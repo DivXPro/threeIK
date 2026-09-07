@@ -116,6 +116,7 @@ describe('DragTarget', () => {
     const dom = makeDomStub();
     const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
     t.setAxisHandles(true, 1);
+    t.setSelected(true); // 箭头只在选中后显示（Maya 同款）
     // 点 X 箭头中点 (0.6,0,0) 的屏幕位置 → 轴拖拽（t0=0.6）
     dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
     expect(t.isDragging).toBe(true);
@@ -133,6 +134,7 @@ describe('DragTarget', () => {
     const dom = makeDomStub();
     const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
     t.setAxisHandles(true, 1);
+    t.setSelected(true);
     // 点箭头根部 (0.1,0,0)（< 0.25 杆长）：不算轴命中；距球心 0.1 超出球容差 → 不触发
     dom.fire('pointerdown', clientFor(camera, new Vector3(0.1, 0, 0)));
     expect(t.isDragging).toBe(false);
@@ -150,6 +152,7 @@ describe('DragTarget', () => {
     const dom = makeDomStub();
     const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
     t.setAxisHandles(true, 1);
+    t.setSelected(true);
     t.setVisible(false);
     dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
     expect(t.isDragging).toBe(false);

@@ -15,6 +15,10 @@ const _wq = new Quaternion();
 // 拖拽命中间隙：按相机距离换算的世界容差（~26px 屏幕等效），让小球在手机上也能点到
 const HIT_TOLERANCE_PER_METER = 0.011;
 
+/** 操纵器屏幕恒定大小的参照距离（米）：相机在这个距离时，箭头/环的世界尺寸 = 设定值；
+ *  近了缩小、远了放大，屏幕上看起来永远一样大（Maya 操纵器同款行为） */
+export const MANIPULATOR_REF_DIST = 3.5;
+
 // 轴箭头共享资源（模块级单例，不随实例 dispose）：单位箭头沿 +Y，总长约 1，实例按 arrowLen 缩放
 const ARROW_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
 const _shaftGeo = new CylinderGeometry(0.025, 0.025, 0.8, 8).translate(0, 0.4, 0); // 0→0.8
@@ -73,6 +77,15 @@ export class DragTarget extends Object3D {
   private controlLocked = false;
   // 操纵器模式切换（move/rotate）用：非交互时 pointerdown 不响应（球本体可由 setVisible 隐藏）
   private interactive = true;
+  // 选中机制（Maya 同款：只有选中的控制点才显示操纵器）：
+  // onPress = 任意命中按下时上报（装配器据此选中所属控制点）；
+  // marker 模式 = 球显示但不可拖（rotate 模式下的可点标记），按下只触发 onPress；
+  // selected = 轴箭头显示的前提（arrowsOn && selected && 球可见）
+  /** 命中按下时触发（选中机制用）；无论是否进入拖拽都会调 */
+  onPress?: () => void;
+  private markerMode = false;
+  private selected = false;
+  private readonly camera: Camera;
   // 跟随锚点：非拖拽时球随锚点（通常是钳制中心骨）世界平移，保持相对偏移——
   // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
   private carryAnchor: Object3D | null = null;
@@ -98,6 +111,7 @@ export class DragTarget extends Object3D {
   ) {
     super();
     this.dom = dom;
+    this.camera = camera;
     this.dragControl = dragControl;
     this.position.copy(initial);
     this.ballRadius = ballRadius;
@@ -151,14 +165,17 @@ export class DragTarget extends Object3D {
         let best = -1;
         let bestDist = Infinity;
         let bestT = 0;
+        const arrowLenWorld = this.arrowLen * this.arrowsGroup.scale.x; // 屏幕恒定大小：命中区按实际世界长度算
         for (let i = 0; i < 3; i++) {
           _axisW.copy(_AXES[i]!).applyQuaternion(_wq);
           if (!rayAxisClosest(_axisW, _c)) continue;
-          if (pick.t < this.arrowLen * 0.25 || pick.t > this.arrowLen * 1.15) continue;
-          if (pick.dist > tolerance + this.arrowLen * 0.035) continue;
+          if (pick.t < arrowLenWorld * 0.25 || pick.t > arrowLenWorld * 1.15) continue;
+          if (pick.dist > tolerance + arrowLenWorld * 0.035) continue;
           if (pick.dist < bestDist) { best = i; bestDist = pick.dist; bestT = pick.t; }
         }
         if (best >= 0) {
+          this.onPress?.();
+          if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
           this.dragging = true;
           this.axisDragging = true;
           this.dragAxisVec.copy(_AXES[best]!).applyQuaternion(_wq);
@@ -172,7 +189,9 @@ export class DragTarget extends Object3D {
           return;
         }
       }
-      if (ray.ray.distanceToPoint(_c) <= this.ballRadius + tolerance) {
+      if (ray.ray.distanceToPoint(_c) <= this.ballRadius * this.ball.scale.x + tolerance) {
+        this.onPress?.();
+        if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
         this.dragging = true;
         // 拖拽平面：过当前位置、面向相机
         camera.getWorldDirection(plane.normal);
@@ -220,14 +239,39 @@ export class DragTarget extends Object3D {
     this.interactive = v;
   }
 
-  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中；轴箭头跟随） */
+  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中；轴箭头跟随球与选中态） */
   setVisible(v: boolean): void {
     this.ball.visible = v;
-    if (this.arrowsGroup) this.arrowsGroup.visible = v && this.arrowsOn;
+    this.syncArrowsVisibility();
+  }
+
+  /** 标记模式（rotate 模式下双通道控制点的球变成可点标记）：显示但不可拖，按下只触发选中；
+   *  球缩到 0.7 倍与可拖状态区分 */
+  setMarkerMode(v: boolean): void {
+    this.markerMode = v;
+    this.ball.scale.setScalar(v ? 0.7 : 1);
+  }
+
+  /** 选中态（Maya 同款：只有选中的控制点才显示操纵器）：轴箭头的显示前提之一 */
+  setSelected(v: boolean): void {
+    this.selected = v;
+    this.syncArrowsVisibility();
+  }
+
+  /** 每帧调用（ctl.update）：轴箭头屏幕恒定大小——按相机距离换算世界缩放 */
+  updateFrame(): void {
+    if (!this.arrowsGroup || !this.arrowsGroup.visible) return;
+    this.ball.getWorldPosition(_c);
+    this.arrowsGroup.scale.setScalar(this.arrowLen * (this.camera.position.distanceTo(_c) / MANIPULATOR_REF_DIST));
+  }
+
+  private syncArrowsVisibility(): void {
+    if (this.arrowsGroup) this.arrowsGroup.visible = this.arrowsOn && this.selected && this.ball.visible;
   }
 
   /** 开关轴箭头（Maya Move 样式移动操纵器）：拖箭头 = 沿该世界轴单轴移动。
-   *  len 缺省 = 6 倍球半径；箭头资源模块级共享，重复调用不重复建 */
+   *  len 缺省 = 6 倍球半径（屏幕恒定大小：参照距离 3.5m 处的世界长度）；箭头资源模块级共享，
+   *  重复调用不重复建。箭头只在控制点被选中时显示（setSelected） */
   setAxisHandles(on: boolean, len?: number): void {
     this.arrowsOn = on;
     if (on && !this.arrowsGroup) {
@@ -245,11 +289,10 @@ export class DragTarget extends Object3D {
         g.add(arrow);
       }
       g.scale.setScalar(this.arrowLen);
-      g.visible = this.ball.visible;
       this.arrowsGroup = g;
       this.add(g);
     }
-    if (this.arrowsGroup) this.arrowsGroup.visible = on && this.ball.visible;
+    this.syncArrowsVisibility();
   }
 
   /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离。

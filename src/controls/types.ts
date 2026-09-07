@@ -54,6 +54,8 @@ export interface ControlBuildContext {
   defaults: ResolvedDefaults;
   /** 按名取骨（找不到抛 BONE_NOT_FOUND） */
   bone(name: string): Bone;
+  /** 选中机制（Maya 同款：只有选中的控制点显示操纵器）：kind 把每个操纵器的 onPress 挂到这里 */
+  select(name: string): void;
 }
 
 /** 操纵器模式（Maya W/E）：move = 位置球，rotate = 旋转环（仅双通道控制点响应切换） */

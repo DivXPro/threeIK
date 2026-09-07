@@ -78,7 +78,8 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   const initial = spec.position ? toVec3(spec.position) : endObj.getWorldPosition(new Vector3());
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xff5533, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
-  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球
+  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球（选中后显示）
+  target.onPress = () => ctx.select(spec.name);
   ctx.scene.add(target);
 
   const poleRadius = spec.pole?.radius ?? ctx.defaults.poleRadius;
@@ -89,6 +90,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     dragControl: ctx.dragControl,
   });
   pole.bind(midObj, rootObj, target); // 轨道中心 = 肘/膝；链轴 = 根骨→端球（端球被可达钳制收拢过，与实际链一致）
+  pole.onPress = () => ctx.select(spec.name);
   ctx.scene.add(pole);
 
   const modifier = new TwoBoneIkModifier([{
@@ -103,6 +105,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   if (spec.endRotation) {
     rings = new RotateRings(ctx.camera, ctx.dom, { ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius, dragControl: ctx.dragControl });
     rings.setJoint(endObj);
+    rings.onPress = () => ctx.select(spec.name);
     ctx.scene.add(rings);
     // rootBone=端骨（链上最深）：深度排序保证定向在链 IK 摆位之后执行
     modifiers.push({

@@ -45,9 +45,10 @@ describe('RotateRings', () => {
 
   it('拖 X 环：从环顶拖到环前 = 绕 X 轴 +90°（+Y 转向 +Z）', () => {
     const { camera, dom, rings } = makeRings();
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0, R, 0)));
+    const rr = R * rings.scale.x; // 屏幕恒定大小：世界半径 = 设定半径 × 距离缩放
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, rr, 0)));
     expect(rings.isDragging).toBe(true);
-    dom.fire('pointermove', clientFor(camera, new Vector3(0, 0, R)));
+    dom.fire('pointermove', clientFor(camera, new Vector3(0, 0, rr)));
     const q = worldQuat(rings);
     const y = new Vector3(0, 1, 0).applyQuaternion(q);
     expect(y.x).toBeCloseTo(0, 5);
@@ -60,7 +61,7 @@ describe('RotateRings', () => {
   it('拖视角环：屏幕右侧点拖到顶部 = 绕 +Z +90°（+X 转向 +Y）', () => {
     // 视角环永远面向相机，用正相机（朝 -Z）几何以屏平面为环平面，角度精确
     const { camera, dom, rings } = makeRings(new Vector3(), makeCamera(0, 0, 5, 0, 0, 0));
-    const rv = R * 1.3; // 视角环半径
+    const rv = R * 1.3 * rings.scale.x; // 视角环半径（× 屏幕恒定大小缩放）
     dom.fire('pointerdown', clientFor(camera, new Vector3(rv, 0, 0)));
     expect(rings.isDragging).toBe(true);
     dom.fire('pointermove', clientFor(camera, new Vector3(0, rv, 0)));
@@ -76,14 +77,15 @@ describe('RotateRings', () => {
     dom.fire('pointerdown', clientFor(camera, new Vector3(2, 2, 0)));
     expect(rings.isDragging).toBe(false);
     rings.setInteractive(false);
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0, R, 0)));
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, R * rings.scale.x, 0)));
     expect(rings.isDragging).toBe(false);
   });
 
   it('拖拽中朝向不被 update 同步覆盖；松手后再次同步关节', () => {
     const { camera, dom, joint, rings } = makeRings();
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0, R, 0)));
-    dom.fire('pointermove', clientFor(camera, new Vector3(0, 0, R)));
+    const rr = R * rings.scale.x;
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, rr, 0)));
+    dom.fire('pointermove', clientFor(camera, new Vector3(0, 0, rr)));
     const dragged = worldQuat(rings).clone();
     rings.update(); // 拖拽中：朝向保持用户写入值
     expect(worldQuat(rings).angleTo(dragged)).toBeLessThan(1e-6);
@@ -102,7 +104,8 @@ describe('RotateRings', () => {
     const joint = new Object3D();
     rings.setJoint(joint);
     rings.update();
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0, R, 0)));
+    const rr = R * rings.scale.x; // 屏幕恒定大小：世界半径 = 设定半径 × 距离缩放
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, rr, 0)));
     expect(rings.isDragging).toBe(true);
     expect(dragControl.lock).toHaveBeenCalledTimes(1);
     rings.dispose();
@@ -110,7 +113,7 @@ describe('RotateRings', () => {
     expect(dom.listenerCount('pointerdown')).toBe(0);
     expect(dom.listenerCount('pointermove')).toBe(0);
     expect(dom.listenerCount('pointerup')).toBe(0);
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0, R, 0)));
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, rr, 0)));
     expect(rings.isDragging).toBe(false);
   });
 });

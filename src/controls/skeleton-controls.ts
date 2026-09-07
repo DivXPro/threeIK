@@ -52,6 +52,7 @@ export class SkeletonControls {
   private readonly controls = new Map<string, BuiltControl>();
   private readonly ctx: ControlBuildContext;
   private manipulatorMode: ManipulatorMode = 'move';
+  private selectedName: string | null = null;
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
@@ -68,6 +69,7 @@ export class SkeletonControls {
         ...options.defaults,
       },
       bone: (name) => rig.getBoneAt(rig.boneIndex(name)),
+      select: (name) => this.select(name),
     };
 
     const built = options.controls.map((spec) => this.buildControl(spec));
@@ -109,13 +111,15 @@ export class SkeletonControls {
     for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
     c.dispose();
     this.controls.delete(name);
+    if (this.selectedName === name) this.selectedName = null;
   }
 
-  /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 */
+  /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 → 操纵器屏幕恒定大小 */
   update(): void {
     for (const c of this.controls.values()) {
       for (const t of c.targets) t.carryAlong();
       c.update?.();
+      for (const t of c.targets) t.updateFrame();
     }
   }
 
@@ -128,27 +132,46 @@ export class SkeletonControls {
   }
 
   /** 操纵器模式切换（Maya W/E）：move = 位置球，rotate = 旋转环。
-   *  仅带旋转通道的控制点响应（球藏起、环上场）；纯位置控制点两种模式下都保持可用 */
+   *  双通道控制点的球在 rotate 模式变成可点标记（选中用）；纯位置控制点两种模式下都保持可拖 */
   setManipulatorMode(mode: ManipulatorMode): void {
     if (this.manipulatorMode === mode) return;
     this.manipulatorMode = mode;
-    for (const c of this.controls.values()) this.applyManipulatorMode(c);
+    for (const c of this.controls.values()) this.applyView(c);
   }
 
   getManipulatorMode(): ManipulatorMode {
     return this.manipulatorMode;
   }
 
-  private applyManipulatorMode(c: BuiltControl): void {
-    if (!c.rotateRings?.length) return; // 无旋转通道：不参战
+  /** 选中控制点（Maya 同款：只有选中的显示操纵器——move 模式显轴箭头、rotate 模式显旋转环）；
+   *  传 null 取消选中。操纵器的 onPress 会自动调它（点哪个选中哪个） */
+  select(name: string | null): void {
+    if (name !== null && !this.controls.has(name)) return;
+    if (this.selectedName === name) return;
+    this.selectedName = name;
+    for (const c of this.controls.values()) this.applyView(c);
+  }
+
+  getSelected(): string | null {
+    return this.selectedName;
+  }
+
+  /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示） */
+  private applyView(c: BuiltControl): void {
     const move = this.manipulatorMode === 'move';
+    const selected = this.selectedName === c.name;
+    const hasRings = !!c.rotateRings?.length;
     for (const t of c.moveTargets ?? c.targets) {
-      t.setInteractive(move);
-      t.setVisible(move);
+      t.setVisible(true);
+      t.setInteractive(true);
+      // rotate 模式下双通道球退化成可点标记（选中入口，不可拖）；纯位置控制点不受模式影响
+      t.setMarkerMode(!move && hasRings);
+      t.setSelected(move && selected); // 轴箭头：move 模式 + 选中
     }
-    for (const r of c.rotateRings) {
-      r.setInteractive(!move);
-      r.setVisible(!move);
+    for (const r of c.rotateRings ?? []) {
+      const show = !move && selected; // 旋转环：rotate 模式 + 选中
+      r.setInteractive(show);
+      r.setVisible(show);
     }
   }
 
@@ -162,7 +185,7 @@ export class SkeletonControls {
     }
     const c = factory(this.ctx, spec);
     this.controls.set(spec.name, c);
-    this.applyManipulatorMode(c);
+    this.applyView(c);
     return c;
   }
 

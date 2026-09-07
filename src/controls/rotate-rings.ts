@@ -1,5 +1,5 @@
 import { Camera, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, TorusGeometry, Vector2, Vector3 } from 'three';
-import type { DragControl, DragDom, DragPointerEvent } from './drag-target';
+import { MANIPULATOR_REF_DIST, type DragControl, type DragDom, type DragPointerEvent } from './drag-target';
 
 // 与 DragTarget 同款命中容差：按相机距离换算的世界容差，让细环在屏幕上可点
 const HIT_TOLERANCE_PER_METER = 0.011;
@@ -57,6 +57,8 @@ export class RotateRings extends Object3D {
   private readonly startQuat = new Quaternion();
   private lastAngle = 0;
   private totalDelta = 0;
+  /** 命中按下时触发（选中机制用；装配器据此选中所属控制点） */
+  onPress?: () => void;
 
   constructor(camera: Camera, dom: DragDom, options: { ringRadius?: number; dragControl?: DragControl } = {}) {
     super();
@@ -89,6 +91,7 @@ export class RotateRings extends Object3D {
       this.setRay(e);
       const hit = this.pickRing();
       if (!hit) return;
+      this.onPress?.();
       this.dragging = true;
       this.dragAxis.copy(hit.axis);
       // 右手系角度基：v = axis×u，atan2(w·v, w·u) 即绕轴正方向角
@@ -145,7 +148,8 @@ export class RotateRings extends Object3D {
     this.visible = v;
   }
 
-  /** 每帧调用（求解之后）：跟随关节位置；非拖拽时朝向同步关节；视角环公告板化 */
+  /** 每帧调用（求解之后）：跟随关节位置；非拖拽时朝向同步关节；视角环公告板化；
+   *  屏幕恒定大小（Maya 操纵器同款）：按相机距离缩放，ringRadius 是参照距离 3.5m 处的世界半径 */
   update(): void {
     if (this.joint) {
       this.joint.getWorldPosition(_c);
@@ -157,6 +161,8 @@ export class RotateRings extends Object3D {
         this.writeWorldQuat(_q);
       }
     }
+    this.getWorldPosition(_c);
+    this.scale.setScalar(this.camera.position.distanceTo(_c) / MANIPULATOR_REF_DIST);
     // 视角环面向相机：local = thisWorld⁻¹ × cameraWorld
     this.getWorldQuaternion(_q).invert();
     this.camera.getWorldQuaternion(_pq);
@@ -183,13 +189,13 @@ export class RotateRings extends Object3D {
   private pickRing(): { axis: Vector3; point: Vector3 } | null {
     this.getWorldPosition(_c);
     this.getWorldQuaternion(_pq);
-    const tol = this.camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER + this.ringRadius * 0.055;
+    const tol = this.camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER + this.ringRadius * this.scale.x * 0.055;
     let best: { axis: Vector3; point: Vector3; score: number } | null = null;
     for (let i = 0; i < 4; i++) {
       const isView = i === 3;
       if (isView) this.camera.getWorldDirection(_axis);
       else _axis.copy(AXES[i]!).applyQuaternion(_pq);
-      const radius = this.ringRadius * (isView ? VIEW_RING_SCALE : 1);
+      const radius = this.ringRadius * this.scale.x * (isView ? VIEW_RING_SCALE : 1); // 屏幕恒定大小后的实际世界半径
       _plane.setFromNormalAndCoplanarPoint(_axis, _c);
       const p = _ray.ray.intersectPlane(_plane, _p);
       if (!p) continue;

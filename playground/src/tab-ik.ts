@@ -146,6 +146,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
         if (e.key === 'w' || e.key === 'W') applyMode('move');
         else if (e.key === 'e' || e.key === 'E') applyMode('rotate');
+        else if (e.key === 'Escape') ctl!.select(null); // 取消选中：操纵器（箭头/环）收起
       };
       onKey = onKeyHandler;
       window.addEventListener('keydown', onKeyHandler);

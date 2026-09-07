@@ -43,6 +43,8 @@ export class PoleOrbit extends Object3D {
   /** 轨道上方向（世界系，持久状态）：每帧投影 ⊥ 当前链轴——链轴随手球拖动变化时方向平滑跟随不跳变 */
   private readonly dir = new Vector3(0, 0, 1);
   private dirHint: Vector3 | null = null; // 首帧前的初始方向来源（spec 位置或默认摆位）
+  /** 命中按下时触发（选中机制用；装配器据此选中所属控制点） */
+  onPress?: () => void;
 
   constructor(camera: Camera, dom: DragDom, options: { color?: number; ballRadius?: number; radius?: number; dragControl?: DragControl } = {}) {
     super();
@@ -62,6 +64,7 @@ export class PoleOrbit extends Object3D {
       this.setRay(e);
       this.ball.getWorldPosition(_center);
       if (_ray.ray.distanceToPoint(_center) > this.ballRadius + this.camera.position.distanceTo(_center) * HIT_TOLERANCE_PER_METER) return;
+      this.onPress?.();
       this.dragging = true;
       this.dom.setPointerCapture(e.pointerId);
       if (this.dragControl) {

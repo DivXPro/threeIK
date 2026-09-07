@@ -42,7 +42,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         dragControl: ctx.dragControl,
         facing,
         controls: [
-          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true, ringRadius: 0.12 },
+          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true, ringRadius: 0.24 },
           {
             kind: 'limb', name: 'legL',
             rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
@@ -63,7 +63,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff },
           // 直接掰骨（rotate 模式显示）：胸口拧上半身/侧倾、左右肩端肩耸肩。
           // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧），肩膀环在手臂 TwoBone 之前（送肩后手球仍钉住）
-          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.14 },
+          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.28 },
           { kind: 'bone', name: 'shoulderL', bone: 'mixamorigLeftShoulder', color: 0xffaa66 },
           { kind: 'bone', name: 'shoulderR', bone: 'mixamorigRightShoulder', color: 0x66ddaa },
           // 脖子环声明在头部注视之前（同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视

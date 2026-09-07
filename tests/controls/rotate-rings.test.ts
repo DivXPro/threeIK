@@ -72,6 +72,28 @@ describe('RotateRings', () => {
     dom.fire('pointerup', {});
   });
 
+  it('环高亮：hover 变色、移开恢复、拖拽保持、抬起复位', () => {
+    const { camera, dom, rings } = makeRings();
+    const rr = R * rings.scale.x;
+    const mats = (rings as unknown as { materials: { color: { getHex(): number } }[] }).materials;
+    const baseX = mats[0]!.color.getHex();
+    const baseY = mats[1]!.color.getHex();
+    // hover X 环（环顶 (0, rr, 0) 在 X 环上）→ X 变色，Y 不变
+    dom.fire('pointermove', clientFor(camera, new Vector3(0, rr, 0)));
+    expect(mats[0]!.color.getHex()).not.toBe(baseX);
+    expect(mats[1]!.color.getHex()).toBe(baseY);
+    // 移到无环处 → 恢复
+    dom.fire('pointermove', clientFor(camera, new Vector3(2, 2, 0)));
+    expect(mats[0]!.color.getHex()).toBe(baseX);
+    // 拖 X 环期间保持高亮（指针已离开环也保持）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, rr, 0)));
+    dom.fire('pointermove', clientFor(camera, new Vector3(0, 0, rr)));
+    expect(mats[0]!.color.getHex()).not.toBe(baseX);
+    // 抬起复位
+    dom.fire('pointerup', {});
+    expect(mats[0]!.color.getHex()).toBe(baseX);
+  });
+
   it('远离环不触发拖拽；setInteractive(false) 后命中也不触发', () => {
     const { camera, dom, rings } = makeRings();
     dom.fire('pointerdown', clientFor(camera, new Vector3(2, 2, 0)));

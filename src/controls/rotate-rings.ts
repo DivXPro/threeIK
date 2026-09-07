@@ -5,12 +5,14 @@ import { MANIPULATOR_REF_DIST, type DragControl, type DragDom, type DragPointerE
 const HIT_TOLERANCE_PER_METER = 0.011;
 
 // 单位环几何共享（mesh.scale 放到实际半径；管粗随之等比）：torus 默认躺在 XY 平面，轴为 +Z
-const _unitTorus = new TorusGeometry(1, 0.055, 10, 64);
+const RING_TUBE = 0.03; // 管粗（相对环半径）：细线风格，命中容差同步吃这个值
+const _unitTorus = new TorusGeometry(1, RING_TUBE, 10, 64);
 
 const AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 const AXIS_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
 const VIEW_RING_SCALE = 1.3; // 视角环（绕视线轴）比轴环外扩一圈，Maya 外环同款
 const VIEW_COLOR = 0xcccccc;
+const RING_HIGHLIGHT_COLOR = 0xffee33; // hover/拖拽中的环高亮色（Maya 同款黄）
 
 const _c = new Vector3();   // 环心世界位置
 const _p = new Vector3();   // 射线∩环平面命中点
@@ -32,6 +34,7 @@ function wrapPi(a: number): number {
  * 旋转操纵器（Maya Rotate Tool 的球系等价物）：三根轴环（绕骨自身 X/Y/Z 轴转）
  * + 一圈面向相机的视角环（绕视线轴转）。数学环命中——射线与环平面求交，
  * 命中点到环心距离落在环半径容差内即命中，不依赖 mesh raycast。
+ * hover/拖拽中的环高亮变黄（Maya 同款；材质实例级，互不影响）。
  * 本对象的世界四元数即「期望的骨骼全局朝向」：CopyTransformModifier(referenceObject: rings,
  * copyRotation) 据此驱动骨骼。朝向来源两选一——
  *  setOrientationCarry（FK 语义，掰骨控制点标配）：朝向 = 父骨世界朝向 × 局部偏移。
@@ -46,6 +49,8 @@ export class RotateRings extends Object3D {
   private carryParent: Object3D | null = null;
   private readonly localOffset = new Quaternion();
   private dragging = false;
+  private hoverRing = -1;     // 指针悬停的环（0-2 轴环，3 视角环；-1 无）
+  private dragRingIndex = -1; // 拖拽中的环序号
   private interactive = true;
   private readonly dom: DragDom;
   private readonly camera: Camera;
@@ -72,7 +77,7 @@ export class RotateRings extends Object3D {
     this.camera = camera;
     this.dom = dom;
     this.dragControl = options.dragControl;
-    this.ringRadius = options.ringRadius ?? 0.08;
+    this.ringRadius = options.ringRadius ?? 0.16;
 
     for (let i = 0; i < 3; i++) {
       const mat = new MeshBasicMaterial({ color: AXIS_COLORS[i], depthTest: false, transparent: true, opacity: 0.9 });
@@ -100,6 +105,8 @@ export class RotateRings extends Object3D {
       if (!hit) return;
       this.onPress?.();
       this.dragging = true;
+      this.dragRingIndex = hit.index;
+      this.applyRingColors();
       this.dragAxis.copy(hit.axis);
       // 右手系角度基：v = axis×u，atan2(w·v, w·u) 即绕轴正方向角
       const ref = Math.abs(hit.axis.y) < 0.9 ? _w.set(0, 1, 0) : _w.set(1, 0, 0);
@@ -115,7 +122,18 @@ export class RotateRings extends Object3D {
       }
     };
     this.onPointerMove = (e) => {
-      if (!this.dragging) return;
+      if (!this.dragging) {
+        // hover 高亮：可交互且可见时挑出悬停环，否则清空
+        if (this.interactive && this.visible) {
+          this.setRay(e);
+          const hit = this.pickRing();
+          this.hoverRing = hit ? hit.index : -1;
+        } else {
+          this.hoverRing = -1;
+        }
+        this.applyRingColors();
+        return;
+      }
       this.setRay(e);
       this.getWorldPosition(_c);
       _plane.setFromNormalAndCoplanarPoint(this.dragAxis, _c);
@@ -135,6 +153,9 @@ export class RotateRings extends Object3D {
     };
     this.onPointerUp = () => {
       this.dragging = false;
+      this.dragRingIndex = -1;
+      this.hoverRing = -1; // 下一次 pointermove 重算
+      this.applyRingColors();
       this.releaseControl();
     };
     dom.addEventListener('pointerdown', this.onPointerDown);
@@ -205,6 +226,8 @@ export class RotateRings extends Object3D {
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
     this.dragging = false;
+    this.dragRingIndex = -1;
+    this.hoverRing = -1;
     this.releaseControl();
     for (const m of this.materials) m.dispose();
     this.removeFromParent();
@@ -216,12 +239,12 @@ export class RotateRings extends Object3D {
     _ray.setFromCamera(_ndc, this.camera);
   }
 
-  /** 命中检测：返回得分最小（命中点最贴环）的环；无命中返回 null */
-  private pickRing(): { axis: Vector3; point: Vector3 } | null {
+  /** 命中检测：返回得分最小（命中点最贴环）的环；无命中返回 null。index：0-2 轴环，3 视角环 */
+  private pickRing(): { axis: Vector3; point: Vector3; index: number } | null {
     this.getWorldPosition(_c);
     this.getWorldQuaternion(_pq);
-    const tol = this.camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER + this.ringRadius * this.scale.x * 0.055;
-    let best: { axis: Vector3; point: Vector3; score: number } | null = null;
+    const tol = this.camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER + this.ringRadius * this.scale.x * RING_TUBE;
+    let best: { axis: Vector3; point: Vector3; index: number; score: number } | null = null;
     for (let i = 0; i < 4; i++) {
       const isView = i === 3;
       if (isView) this.camera.getWorldDirection(_axis);
@@ -232,10 +255,19 @@ export class RotateRings extends Object3D {
       if (!p) continue;
       const score = Math.abs(_w.copy(p).sub(_c).length() - radius);
       if (score <= tol && (!best || score < best.score)) {
-        best = { axis: _axis.clone(), point: p.clone(), score };
+        best = { axis: _axis.clone(), point: p.clone(), index: i, score };
       }
     }
     return best;
+  }
+
+  /** 环配色：拖拽中的环 > 悬停环 > 各色（轴环 X红/Y绿/Z蓝，视角环灰白） */
+  private applyRingColors(): void {
+    const active = this.dragging ? this.dragRingIndex : this.hoverRing;
+    for (let i = 0; i < this.materials.length; i++) {
+      const base = i < 3 ? AXIS_COLORS[i]! : VIEW_COLOR;
+      this.materials[i]!.color.setHex(i === active ? RING_HIGHLIGHT_COLOR : base);
+    }
   }
 
   private angleOf(point: Vector3): number {

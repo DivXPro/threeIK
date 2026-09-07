@@ -48,6 +48,11 @@ function clientFor(camera: ReturnType<typeof makeCamera>, world: Vector3) {
   return { clientX: ((v.x + 1) / 2) * 800, clientY: ((-v.y + 1) / 2) * 600, pointerId: 1 };
 }
 
+/** 环命中取有效半径（设定半径 × 屏幕恒定大小缩放；未跑 ctl.update 时 scale=1） */
+function ringR(rings: { ringRadius: number; scale: { x: number } }): number {
+  return rings.ringRadius * rings.scale.x;
+}
+
 describe('createSkeletonControls', () => {
   it('modifier 按根骨深度排序（声明顺序仅决定同深度次序）', () => {
     const { rig } = buildRig();
@@ -385,8 +390,9 @@ describe('createSkeletonControls', () => {
     ctl.select('hips');
     expect(legH.rings!.visible).toBe(false);
     expect(hipsH.rings!.visible).toBe(true);
-    // 选中后拖环照常
-    dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0, 0.08, 0))));
+    // 选中后拖环照常（命中点取有效半径：ringRadius × 屏幕恒定大小缩放）
+    const hipsRingR = ringR(hipsH.rings!);
+    dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0, hipsRingR, 0))));
     expect(hipsH.rings!.isDragging).toBe(true);
     dom.fire('pointerup', {});
     // pole 在 rotate 模式仍可拖（与 chain 等纯位置控制点同待遇）
@@ -489,9 +495,10 @@ describe('createSkeletonControls', () => {
     ctl.select('leg'); // 环只在选中后上场（Maya 同款：只显示选中的操纵器）
     scene.updateMatrixWorld(true);
     const center = legH.rings!.getWorldPosition(new Vector3());
-    dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
+    const legRingR = ringR(legH.rings!); // 命中点取有效半径
+    dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(legRingR, 0, 0))));
     expect(legH.rings!.isDragging).toBe(true);
-    dom.fire('pointermove', clientFor(camera, center.clone().add(new Vector3(0, 0, -0.08))));
+    dom.fire('pointermove', clientFor(camera, center.clone().add(new Vector3(0, 0, -legRingR))));
     dom.fire('pointerup', {});
     // 收敛：拖环改的是「相对父骨的局部偏移」，装配后的首个完整求解会顺带把链收到
     // pole 就位后的稳定姿势（装配首解时 pole 球未落位，弯度来源不同）——多跑几帧让
@@ -555,8 +562,9 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
     expect(hipsH.rings!.isDragging).toBe(false); // 未选中：环不上场、不可命中
     ctl.select('hips'); // 选中后环上场
-    dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(0.08, 0, 0))));
-    dom.fire('pointermove', clientFor(camera, center.clone().add(new Vector3(0, 0, -0.08))));
+    const hipsRingR2 = ringR(hipsH.rings!); // 命中点取有效半径
+    dom.fire('pointerdown', clientFor(camera, center.clone().add(new Vector3(hipsRingR2, 0, 0))));
+    dom.fire('pointermove', clientFor(camera, center.clone().add(new Vector3(0, 0, -hipsRingR2))));
     dom.fire('pointerup', {});
     const posBefore = rig.getBoneAt(rig.boneIndex('Hips')).getWorldPosition(new Vector3());
     rig.update(0);
@@ -599,9 +607,10 @@ describe('createSkeletonControls', () => {
     expect(chestH.rings.visible).toBe(true);
     dom.fire('pointerup', {});
     // 拖 X 环绕世界 X 转（Spine 正上方是 Neck，绕 Y 转原地打转看不出位移，绕 X 转 Neck 才被带起来）；
-    // 取 30°→120° 非基向弧点（基向点同时落在两环平面上，浮点定胜负）
+    // 取 30°→120° 非基向弧点（基向点同时落在两环平面上，浮点定胜负）；半径取有效半径
+    const chestRingR = ringR(chestH.rings);
     const arc = (deg: number) => center.clone().add(
-      new Vector3(0, 0.08 * Math.cos(deg * Math.PI / 180), 0.08 * Math.sin(deg * Math.PI / 180)));
+      new Vector3(0, chestRingR * Math.cos(deg * Math.PI / 180), chestRingR * Math.sin(deg * Math.PI / 180)));
     dom.fire('pointerdown', clientFor(camera, arc(30)));
     expect(chestH.rings.isDragging).toBe(true);
     dom.fire('pointermove', clientFor(camera, arc(120)));

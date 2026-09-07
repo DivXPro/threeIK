@@ -24,7 +24,7 @@ export interface ControlsDefaults {
   rootRadius?: number;
   /** 拖球视觉半径，默认 0.0225 */
   ballRadius?: number;
-  /** 旋转环半径（世界坐标），默认 0.08 */
+  /** 旋转环半径（世界坐标），默认 0.16 */
   ringRadius?: number;
 }
 

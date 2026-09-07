@@ -20,6 +20,11 @@ const _q = new Quaternion(); // 父世界四元数的逆（世界方向 → 父�
  * 「轨道中心 + 链轴 + 轨道上方向」逐帧推出，身体移动时自动跟随，无需携带偏移。
  * 纯位置控制点：不参与 W/E 操纵器模式切换，两种模式都常驻可用。
  * 暴露的 ball 即 TwoBoneIK 的 poleTarget（求解器只读其世界位置）。
+ *
+ * 轨道上方向（世界系）只在拖球/方向提示时改写，绝不把逐帧投影残差写回——写回会让
+ * 链轴扫过方向附近时的小残差归一化成任意垂直方向并累积（随机游走），手臂大幅挥动后
+ * 方向漂到链轴错误一侧（手横到胸前时肘翻到身前，「反肘」）。逐帧落位只做投影不重写；
+ * 投影退化（轴≈方向）时用上次落位方向兜底。
  */
 export class PoleOrbit extends Object3D {
   /** 轨道上的球（TwoBoneIK poleTarget / 引导线端点都读它） */
@@ -40,8 +45,10 @@ export class PoleOrbit extends Object3D {
   private anchor: Object3D | null = null;
   private axisFrom: Object3D | null = null;
   private axisTo: Object3D | null = null;
-  /** 轨道上方向（世界系，持久状态）：每帧投影 ⊥ 当前链轴——链轴随手球拖动变化时方向平滑跟随不跳变 */
+  /** 轨道上方向（世界系，持久状态）：只在拖球/方向提示时改写；逐帧落位做投影但不写回（防残差漂移） */
   private readonly dir = new Vector3(0, 0, 1);
+  /** 上次实际落位的世界方向：dir 与链轴近乎平行（投影退化）时的兜底，保持落位连续 */
+  private readonly placedDir = new Vector3(0, 0, 1);
   private dirHint: Vector3 | null = null; // 首帧前的初始方向来源（spec 位置或默认摆位）
   /** 命中按下时触发（选中机制用；装配器据此选中所属控制点） */
   onPress?: () => void;
@@ -158,21 +165,28 @@ export class PoleOrbit extends Object3D {
     return true;
   }
 
-  /** 按持久状态落位：中心 = 中骨关节，球 = 中心 + 半径 ×（方向 ⊥ 链轴）。本体不旋转，
-   *  球的世界偏移直接是 dir×半径——父带旋转时用父世界四元数的逆换算回局部 */
+  /** 按持久状态落位：中心 = 中骨关节，球 = 中心 + 半径 ×（持久方向 ⊥ 链轴的投影）。
+   *  投影结果不写回 dir（防小残差归一化后累积漂移）；dir 与链轴近乎平行时用上次落位
+   *  方向兜底。本体不旋转，球的世界偏移直接是方向×半径——父带旋转时用父世界四元数的逆换算回局部 */
   private place(): void {
     if (!this.frame(_center, _axis)) return;
-    // 方向投影 ⊥ 链轴（链轴变了方向平滑跟随）；完全贴轴时保留旧方向的残余分量，实在退化就跳过
-    this.dir.addScaledVector(_axis, -this.dir.dot(_axis));
-    if (this.dir.lengthSq() < 1e-10) return;
-    this.dir.normalize();
+    _w.copy(this.dir);
+    _w.addScaledVector(_axis, -_w.dot(_axis));
+    if (_w.lengthSq() < 1e-6) {
+      // 持久方向几乎贴上链轴：用上次的落位方向保持连续（不改写 dir，扫过退化区后自动恢复）
+      _w.copy(this.placedDir);
+      _w.addScaledVector(_axis, -_w.dot(_axis));
+      if (_w.lengthSq() < 1e-10) return;
+    }
+    _w.normalize();
+    this.placedDir.copy(_w);
     if (this.parent) {
       this.position.copy(this.parent.worldToLocal(_center));
       this.parent.getWorldQuaternion(_q).invert();
-      this.ball.position.copy(this.dir).applyQuaternion(_q).multiplyScalar(this.orbitRadius);
+      this.ball.position.copy(_w).applyQuaternion(_q).multiplyScalar(this.orbitRadius);
     } else {
       this.position.copy(_center);
-      this.ball.position.copy(this.dir).multiplyScalar(this.orbitRadius);
+      this.ball.position.copy(_w).multiplyScalar(this.orbitRadius);
     }
   }
 

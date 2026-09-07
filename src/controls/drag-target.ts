@@ -22,8 +22,8 @@ export const MANIPULATOR_REF_DIST = 3.5;
 // 轴箭头共享几何（模块级单例，不随实例 dispose）：单位箭头沿 +Y，总长约 1，实例按 arrowLen 缩放
 const ARROW_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
 const ARROW_HIGHLIGHT_COLOR = 0xffee33; // hover/拖拽中的轴高亮色（Maya 同款黄）
-const _shaftGeo = new CylinderGeometry(0.025, 0.025, 0.8, 8).translate(0, 0.4, 0); // 0→0.8
-const _tipGeo = new ConeGeometry(0.07, 0.2, 12).translate(0, 0.9, 0);              // 0.8→1.0
+const _shaftGeo = new CylinderGeometry(0.035, 0.035, 0.8, 8).translate(0, 0.4, 0); // 0→0.8
+const _tipGeo = new ConeGeometry(0.095, 0.2, 12).translate(0, 0.9, 0);             // 0.8→1.0
 const _AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 
 /** 拖球期间禁用视角控制（OrbitControls）的计数锁接口，由应用侧注入（playground scene.ts 同款） */
@@ -305,12 +305,12 @@ export class DragTarget extends Object3D {
   }
 
   /** 开关轴箭头（Maya Move 样式移动操纵器）：拖箭头 = 沿该世界轴单轴移动。
-   *  len 缺省 = 6 倍球半径（屏幕恒定大小：参照距离 3.5m 处的世界长度）；箭头资源模块级共享，
+   *  len 缺省 = 8 倍球半径（屏幕恒定大小：参照距离 3.5m 处的世界长度）；箭头资源模块级共享，
    *  重复调用不重复建。箭头只在控制点被选中时显示（setSelected） */
   setAxisHandles(on: boolean, len?: number): void {
     this.arrowsOn = on;
     if (on && !this.arrowsGroup) {
-      this.arrowLen = len ?? this.ballRadius * 6;
+      this.arrowLen = len ?? this.ballRadius * 8;
       // 材质实例级（hover/拖拽高亮要改色，不能用共享材质影响其他 DragTarget）；几何仍共享
       this.arrowMats = ARROW_COLORS.map((color) => new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }));
       const g = new Object3D();

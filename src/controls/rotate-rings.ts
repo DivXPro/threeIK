@@ -5,7 +5,7 @@ import { MANIPULATOR_REF_DIST, type DragControl, type DragDom, type DragPointerE
 const HIT_TOLERANCE_PER_METER = 0.011;
 
 // 单位环几何共享（mesh.scale 放到实际半径；管粗随之等比）：torus 默认躺在 XY 平面，轴为 +Z
-const RING_TUBE = 0.03; // 管粗（相对环半径）：细线风格，命中容差同步吃这个值
+const RING_TUBE = 0.02; // 管粗（相对环半径）：细线风格，命中容差同步吃这个值
 const _unitTorus = new TorusGeometry(1, RING_TUBE, 10, 64);
 
 const AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];

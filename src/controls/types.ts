@@ -58,6 +58,9 @@ export interface ControlBuildContext {
   bone(name: string): Bone;
   /** 选中机制（Maya 同款：只有选中的控制点显示操纵器）：kind 把每个操纵器的 onPress 挂到这里 */
   select(name: string): void;
+  /** 只认领按下、不改选中（空白失焦判定用）：pole 等「常驻纯位置操纵器」的 onPress 挂这里——
+   *  点它不该把所属控制点（如手）的操纵器点亮，那会让用户误以为选中了手 */
+  claim(): void;
 }
 
 /** 操纵器模式（Maya W/E）：move = 位置球，rotate = 旋转环（仅双通道控制点响应切换） */

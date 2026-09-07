@@ -81,6 +81,7 @@ export class SkeletonControls {
       },
       bone: (name) => rig.getBoneAt(rig.boneIndex(name)),
       select: (name) => { this.pressClaimed = true; this.select(name); },
+      claim: () => { this.pressClaimed = true; },
     };
 
     const built = options.controls.map((spec) => this.buildControl(spec));

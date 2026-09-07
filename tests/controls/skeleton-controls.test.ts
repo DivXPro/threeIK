@@ -441,9 +441,22 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe(null);
 
-    // 点中操纵器（pole 球）不失焦
-    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
+    // pole 是常驻纯位置操纵器：点它只认领按下（不失焦），但不选中/不点亮所属控制点
+    dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
+    dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe('leg');
+    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('leg'); // 已选中的不被 pole 点击反取消
+    expect(legH.pole.isDragging).toBe(true);
+    dom.fire('pointerup', {});
+
+    // 未选中状态点 pole：不选中该 limb（防误导），pole 本身照常可拖
+    dom.fire('pointerdown', blank);
+    dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe(null);
+    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe(null); // 点肘球不选中手
+    expect(legH.pole.isDragging).toBe(true); // pole 本身照常可拖
     dom.fire('pointerup', {});
 
     // 标记点击（rotate 模式）同样算认领：选中后不被自己的 pointerdown 反取消

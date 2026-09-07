@@ -90,7 +90,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     dragControl: ctx.dragControl,
   });
   pole.bind(midObj, rootObj, target); // 轨道中心 = 肘/膝；链轴 = 根骨→端球（端球被可达钳制收拢过，与实际链一致）
-  pole.onPress = () => ctx.select(spec.name);
+  // pole 是常驻纯位置操纵器（不参与选中体系）：点它只认领按下（防空白失焦），
+  // 不选中所属 limb——否则点肘球会把手的轴箭头点亮，误导用户以为选中了手
+  pole.onPress = () => ctx.claim();
   ctx.scene.add(pole);
 
   const modifier = new TwoBoneIkModifier([{

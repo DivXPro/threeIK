@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { Bone, Object3D, Quaternion, Scene, Vector3 } from 'three';
+import { Bone, MeshBasicMaterial, Object3D, Quaternion, Scene, Vector3 } from 'three';
 import { SkeletonRig } from '../../src/core/skeleton-rig';
 import { createSkeletonControls, registerControlKind } from '../../src/controls';
 import type { BoneControlHandle, BuiltControl, ChainControlHandle, ControlHandleBase, LimbControlHandle, RootControlHandle } from '../../src/controls';
-import { DragTarget } from '../../src/controls/drag-target';
+import { DragTarget, MARKER_SELECTED_COLOR } from '../../src/controls/drag-target';
 import { makeCamera, makeDomStub } from './test-utils';
 
 function bone(name: string, x: number, y: number, z: number) {
@@ -51,6 +51,11 @@ function clientFor(camera: ReturnType<typeof makeCamera>, world: Vector3) {
 /** 环命中取有效半径（设定半径 × 屏幕恒定大小缩放；未跑 ctl.update 时 scale=1） */
 function ringR(rings: { ringRadius: number; scale: { x: number } }): number {
   return rings.ringRadius * rings.scale.x;
+}
+
+/** 拖球当前材质色（标记球选中高亮断言用） */
+function ballColor(t: DragTarget): number {
+  return (t.ball.material as MeshBasicMaterial).color.getHex();
 }
 
 describe('createSkeletonControls', () => {
@@ -952,6 +957,74 @@ describe('createSkeletonControls', () => {
     expect(h.marker.isDragging).toBe(false);
     expect(ctl.getSelected()).toBe('neckC');
     dom.fire('pointerup', {});
+    ctl.dispose();
+  });
+
+  it('纯旋转控制点（bone）选中即出环不看 W/E；标记球选中高亮（放大+亮黄），取消选中复原', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [{ kind: 'bone', name: 'chest', bone: 'Spine', color: 0x88ddff }],
+    });
+    const chestH = ctl.get<BoneControlHandle>('chest')!;
+    scene.updateMatrixWorld(true);
+    // 默认 move 模式、未选中：环收着，标记球 0.7 本色
+    expect(chestH.rings.visible).toBe(false);
+    expect(chestH.marker.ball.scale.x).toBeCloseTo(0.7, 6);
+    expect(ballColor(chestH.marker)).toBe(0x88ddff);
+    // W 模式点标记球：选中 → 环立即上场（可拖），标记球放大高亮——点没点中一眼可见
+    dom.fire('pointerdown', clientFor(camera, chestH.marker.getWorldPosition(new Vector3())));
+    dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe('chest');
+    expect(chestH.rings.visible).toBe(true);
+    expect(chestH.marker.ball.scale.x).toBeCloseTo(0.95, 6);
+    expect(ballColor(chestH.marker)).toBe(MARKER_SELECTED_COLOR);
+    // W 模式下环真的能拖（选中即出环不是摆设）
+    scene.updateMatrixWorld(true);
+    const center = chestH.rings.getWorldPosition(new Vector3());
+    const r = ringR(chestH.rings);
+    const arc = (deg: number) => center.clone().add(
+      new Vector3(0, r * Math.cos(deg * Math.PI / 180), r * Math.sin(deg * Math.PI / 180)));
+    dom.fire('pointerdown', clientFor(camera, arc(30)));
+    expect(chestH.rings.isDragging).toBe(true);
+    dom.fire('pointerup', {});
+    // 取消选中：环收起，标记球复原
+    ctl.select(null);
+    expect(chestH.rings.visible).toBe(false);
+    expect(chestH.marker.ball.scale.x).toBeCloseTo(0.7, 6);
+    expect(ballColor(chestH.marker)).toBe(0x88ddff);
+    ctl.dispose();
+  });
+
+  it('肩/髋根环（rotationOnly 子目标）W 模式选中即出环；主选中/肘子选中时收起，标记球跟随子选中高亮', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [{ kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96, rootRotation: true }],
+    });
+    const h = ctl.get<LimbControlHandle>('leg')!;
+    const shoulderRings = h.shoulderRings!;
+    const shoulderMarker = h.shoulderMarker!;
+    scene.updateMatrixWorld(true);
+    // 默认 move 模式未选中：根环收着
+    expect(shoulderRings.visible).toBe(false);
+    // W 模式选中根关节子目标：根环立即上场，标记球高亮
+    ctl.select('leg:root');
+    expect(shoulderRings.visible).toBe(true);
+    expect(shoulderMarker.ball.scale.x).toBeCloseTo(0.95, 6);
+    expect(ballColor(shoulderMarker)).toBe(MARKER_SELECTED_COLOR);
+    // 主选中（腿本体）：根环收起，肩/髋标记不高亮（高亮跟随子选中，不跟随主选中）
+    ctl.select('leg');
+    expect(shoulderRings.visible).toBe(false);
+    expect(shoulderMarker.ball.scale.x).toBeCloseTo(0.7, 6);
+    // 肘子选中（双通道）：W 模式不出肘环（pole 轴箭头值班），根环也不串场
+    ctl.select('leg:elbow');
+    expect(shoulderRings.visible).toBe(false);
+    expect(h.elbowRings.visible).toBe(false);
+    ctl.select(null);
+    expect(shoulderMarker.ball.scale.x).toBeCloseTo(0.7, 6);
     ctl.dispose();
   });
 });

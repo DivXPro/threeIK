@@ -351,8 +351,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     moveTargets: [target],
     rotateRings: rings ? [rings] : [],
     subRingGroups: [
-      { key: 'elbow', rings: [elbowRings] },
-      ...(shoulderRings ? [{ key: 'root', rings: [shoulderRings] }] : []),
+      { key: 'elbow', rings: [elbowRings] }, // 双通道：W 出 pole 轴箭头，E 出环
+      // 肩/髋根环是纯旋转子目标（W 模式无操纵器）：选中即出环不看 W/E
+      ...(shoulderRings ? [{ key: 'root', rings: [shoulderRings], rotationOnly: true }] : []),
     ],
     modifiers,
     onModeChange(mode) {
@@ -360,6 +361,8 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     },
     onSelectionChange(sub) {
       pole.setSelected(sub === 'elbow'); // 选中肘部才出轴箭头（W 模式；marker 内部再挡一层）
+      // 肩/髋标记球的选中高亮归这里管（跟随子选中 root；applyView 对常驻标记的主选中高亮由本行覆盖）
+      shoulderMarker?.setSelected(sub === 'root');
     },
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);

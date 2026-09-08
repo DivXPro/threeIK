@@ -59,7 +59,8 @@ export interface ControlBuildContext {
   claim(): void;
 }
 
-/** 操纵器模式（Maya W/E）：move = 位置球，rotate = 旋转环（仅双通道控制点响应切换） */
+/** 操纵器模式（Maya W/E）：move = 位置球，rotate = 旋转环（仅双通道控制点响应切换；
+ *  纯旋转控制点（rotationOnly）W 模式没有操纵器可显示，选中即出环不看模式） */
 export type ManipulatorMode = 'move' | 'rotate';
 
 /** kind 工厂产物：装配器据此做 modifier 深度排序、首解、逐帧更新与清理 */
@@ -70,9 +71,13 @@ export interface BuiltControl {
   readonly targets: DragTarget[];
   /** 旋转环（双通道控制点；装配器按操纵器模式切换 球↔环 的显示与交互） */
   readonly rotateRings?: RotateRings[];
+  /** 纯旋转控制点（如 bone 掰骨：W 模式没有可显示的操纵器）：rotateRings 选中即出环，
+   *  不看 W/E——W/E 只对双通道控制点有意义。缺省 false（双通道：环只在 E 模式上场） */
+  readonly rotationOnly?: boolean;
   /** 子选中环组（如 limb 的肘/膝环）：与主 rotateRings 互斥——选中 `${name}:${key}` 时该组上场、
-   *  主环收起；选中主名（name）时反之。让肘/膝成为独立选中目标：点 pole 球 = 选中肘部 */
-  readonly subRingGroups?: { key: string; rings: RotateRings[] }[];
+   *  主环收起；选中主名（name）时反之。让肘/膝成为独立选中目标：点 pole 球 = 选中肘部。
+   *  rotationOnly 同上：肩/髋根环这类 W 模式无操纵器的纯旋转子目标，选中即出环不看 W/E */
+  readonly subRingGroups?: { key: string; rings: RotateRings[]; rotationOnly?: boolean }[];
   /** 参与 move 模式切换的球（缺省 = targets） */
   readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */

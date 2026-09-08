@@ -3,6 +3,9 @@ import { AxisArrows, HIT_TOLERANCE_PER_METER, MANIPULATOR_REF_DIST, rayAxisClose
 
 export { MANIPULATOR_REF_DIST };
 
+/** 标记球选中高亮色（与操纵器 hover 高亮同色系：亮黄 = 「激活」） */
+export const MARKER_SELECTED_COLOR = 0xffee33;
+
 // 约束计算模块临时量（applyConstraints 在拖拽热路径上，不逐帧分配）
 const _c = new Vector3(); // 锚点世界位置
 const _off = new Vector3();
@@ -39,6 +42,8 @@ export class DragTarget extends Object3D {
   readonly ball: Mesh;
   /** 视觉球半径（拖拽命中在此基础上再加按相机距离换算的容差） */
   readonly ballRadius: number;
+  private readonly material: MeshBasicMaterial;
+  private readonly baseColor: number;
   private dragging = false;
   private readonly dom: DragDom;
   private readonly onPointerDown: (e: DragPointerEvent) => void;
@@ -99,10 +104,9 @@ export class DragTarget extends Object3D {
     this.dragControl = dragControl;
     this.position.copy(initial);
     this.ballRadius = ballRadius;
-    this.ball = new Mesh(
-      new SphereGeometry(ballRadius, 20, 14),
-      new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }),
-    );
+    this.baseColor = color;
+    this.material = new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 });
+    this.ball = new Mesh(new SphereGeometry(ballRadius, 20, 14), this.material);
     this.ball.renderOrder = 999;
     this.add(this.ball);
 
@@ -218,16 +222,29 @@ export class DragTarget extends Object3D {
   }
 
   /** 标记模式（rotate 模式下双通道控制点的球变成可点标记）：显示但不可拖，按下只触发选中；
-   *  球缩到 0.7 倍与可拖状态区分 */
+   *  球缩到 0.7 倍与可拖状态区分（选中时再放大高亮，见 syncMarkerAppearance） */
   setMarkerMode(v: boolean): void {
     this.markerMode = v;
-    this.ball.scale.setScalar(v ? 0.7 : 1);
+    this.syncMarkerAppearance();
   }
 
-  /** 选中态（Maya 同款：只有选中的控制点才显示操纵器）：轴箭头的显示前提之一 */
+  /** 选中态（Maya 同款：只有选中的控制点才显示操纵器）：轴箭头的显示前提之一；
+   *  标记模式下的球同时做选中高亮（放大 + 亮黄）——纯旋转控制点点击反馈全靠它 */
   setSelected(v: boolean): void {
     this.selected = v;
     this.syncArrowsVisibility();
+    this.syncMarkerAppearance();
+  }
+
+  /** 标记球外观：选中 = 放大到 0.95 + 亮黄高亮；未选中 = 0.7 + 本色；非标记 = 原样 */
+  private syncMarkerAppearance(): void {
+    if (this.markerMode) {
+      this.ball.scale.setScalar(this.selected ? 0.95 : 0.7);
+      this.material.color.setHex(this.selected ? MARKER_SELECTED_COLOR : this.baseColor);
+    } else {
+      this.ball.scale.setScalar(1);
+      this.material.color.setHex(this.baseColor);
+    }
   }
 
   /** 每帧调用（ctl.update）：轴箭头屏幕恒定大小——按相机距离换算世界缩放 */

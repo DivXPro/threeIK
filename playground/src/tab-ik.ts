@@ -63,7 +63,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           },
           // 脊柱 FABRIK 拉躯干（Spine→Neck）
           { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff },
-          // 直接掰骨（rotate 模式显示）：胸口拧上半身/侧倾、脖子摆头。
+          // 直接掰骨（纯旋转：点标记球选中即出环，不看 W/E）：胸口拧上半身/侧倾、脖子摆头。
           // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧）；脖子环声明在头部注视之前
           // （同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
           { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.28 },
@@ -132,8 +132,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       };
       const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
-      // 操纵器模式（Maya W/E）：W = 移动球 + 肘/膝 pole 球（双通道影子球）；E = 旋转环
-      // （双通道控制点：髋/脚/手 + 旋转专用：胸口/脖子/脚尖 + 肘/膝二维环：扭转 + 伸缩 + 肩三维环：大臂扭转+摆动）
+      // 操纵器模式（Maya W/E）：W = 移动球 + 肘/膝 pole 球（双通道影子球）；E = 旋转环。
+      // 纯旋转控制点（胸口/脖子/肩/髋）两种模式都选中即出环——W/E 只对双通道控制点（髋/脚/手/肘）有意义
       let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;
@@ -168,8 +168,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           f.add(mod as CCDIkModifier, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
         }
       }
-      // 直接掰骨（胸口/脖子）：旋转专用控制点，rotate 模式（E）显示
-      const fBone = gui.addFolder('直接掰骨（E 模式）');
+      // 直接掰骨（胸口/脖子）：旋转专用控制点，选中即出环（不看 W/E）
+      const fBone = gui.addFolder('直接掰骨');
       for (const [i, name] of ['胸口', '脖子'].entries()) {
         fBone.add(bones[i]!.modifier, 'active').name(name);
       }

@@ -206,7 +206,8 @@ export class SkeletonControls {
   }
 
   /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）；
-   *  子环组（肘/膝）跟随子选中（`name:sub`），与主环互斥 */
+   *  子环组（肘/膝）跟随子选中（`name:sub`），与主环互斥；
+   *  纯旋转控制点（rotationOnly，W 模式无操纵器可显示）选中即出环，不看 W/E */
   private applyView(c: BuiltControl): void {
     const move = this.manipulatorMode === 'move';
     const selected = this.selectedName === c.name;
@@ -221,13 +222,21 @@ export class SkeletonControls {
       t.setMarkerMode(!move && hasRings);
       t.setSelected(move && selected); // 轴箭头：move 模式 + 选中
     }
+    // 常驻标记球（不在 moveTargets 里的，如 bone/肩髋标记）：选中高亮，不看模式——
+    // 纯旋转控制点在 W 模式点击的唯一即时反馈。kind 自己管理子选中标记的（limb 肩髋球），
+    // 由后面的 onSelectionChange 覆盖（顺序保证后者生效）
+    const moveSet = new Set(c.moveTargets ?? c.targets);
+    for (const t of c.targets) {
+      if (!moveSet.has(t)) t.setSelected(selected);
+    }
     for (const r of c.rotateRings ?? []) {
-      const show = !move && selected; // 旋转环：rotate 模式 + 选中
+      // 旋转环：选中 + rotate 模式；纯旋转控制点（W 模式没有别的操纵器）选中即出环不看 W/E
+      const show = selected && (!move || !!c.rotationOnly);
       r.setInteractive(show);
       r.setVisible(show);
     }
     for (const g of c.subRingGroups ?? []) {
-      const show = !move && subSelected === g.key; // 子环组：rotate 模式 + 子选中
+      const show = subSelected === g.key && (!move || !!g.rotationOnly); // 子环组：同上
       for (const r of g.rings) {
         r.setInteractive(show);
         r.setVisible(show);

@@ -27,7 +27,8 @@ const _q = new Quaternion(); // 父世界四元数的逆（世界方向 → 父�
  *   角度通道（绕链轴转）= 肘/膝朝向——球在环上的角度即关节绕轴方向（Maya pole vector 同款）；
  *   径向通道（离轴远近）= 弯度——外拽更弯、推回轴心伸直（onRadiusDrag 回调由装配层移动端球实现，
  *   手会跟着动；反过来拖端球仍是 IK，球自动滑回实测半径，兼作弯度仪表）。
- * W 模式（move）操纵器：E 模式收起、换肘部旋转环上场（装配层 onModeChange 换班）。
+ * W 模式（move）操纵器：E 模式退化成可点标记（可见、按下只触发 onPress 选中肘部、不可拖），
+ * 换肘部旋转环上场（装配层 onModeChange 换班）——球是肘部在 E 模式唯一的选中入口，不能藏。
  * 暴露的 ball 即 TwoBoneIK 的 poleTarget（求解器只读其世界位置投影出的方向）。
  *
  * 角度方向的持久状态（dir）只在拖球/方向提示时改写，绝不把逐帧投影残差写回——写回会让
@@ -45,6 +46,9 @@ export class PoleOrbit extends Object3D {
   /** 环心在链轴上离根骨的距离（世界米）：逐帧由 setOrbitFrame 推送（拖拽中也更新，跟随弯度变化） */
   private axisOffset = 0;
   private dragging = false;
+  // marker 模式（E 模式，与 DragTarget 同款语义）：球显示但不可拖，按下只触发 onPress（选中肘部）——
+  // 肘环要选中肘部才上场，球是 E 模式下选中肘部的唯一入口，必须留场可点
+  private markerMode = false;
   private lastDragRadius = 0; // 拖拽死区基准（按下时取显示半径）
   // 拖拽期间冻结的参照架（按下瞬间的环心/链轴）：角度通道的命中面 + 径向通道的直线锚点。
   // 不能逐帧跟活架——径向拖动会移动端球改变弯度，环心沿轴滑动、命中面跟着挪，视线贴近
@@ -91,6 +95,7 @@ export class PoleOrbit extends Object3D {
       this.ball.getWorldPosition(_center);
       if (_ray.ray.distanceToPoint(_center) > this.ballRadius + this.camera.position.distanceTo(_center) * HIT_TOLERANCE_PER_METER) return;
       this.onPress?.();
+      if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
       this.dragging = true;
       this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS); // 死区基准与球的显示位置一致
       if (this.frame(this.dragCenter, this.dragAxis)) { /* 冻结拖拽参照架 */ }
@@ -150,6 +155,11 @@ export class PoleOrbit extends Object3D {
   bind(axisFrom: Object3D, axisTo: Object3D): void {
     this.axisFrom = axisFrom;
     this.axisTo = axisTo;
+  }
+
+  /** 标记模式（E 模式）：球可见可点（onPress 照发，选中肘部用）但不可拖 */
+  setMarkerMode(v: boolean): void {
+    this.markerMode = v;
   }
 
   /** 逐帧推送轨道几何（装配层按链三角实测）：d = 中骨关节垂足离根骨的轴向距离，r = 关节离轴半径。

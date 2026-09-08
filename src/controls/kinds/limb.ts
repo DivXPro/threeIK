@@ -46,7 +46,8 @@ export interface LimbControlHandle extends ControlHandleBase {
   readonly kind: 'limb';
   readonly target: DragTarget;
   readonly modifier: TwoBoneIkModifier;
-  /** pole 双通道影子球（W 模式操纵器：角度=肘/膝朝向、径向=弯度；E 模式收起、换肘环上场） */
+  /** pole 双通道影子球（W 模式操纵器：角度=肘/膝朝向、径向=弯度；E 模式退化为可点标记——
+   *  点它选中肘部让肘环上场；两种模式都常显，它还是 TwoBone 的 poleTarget） */
   readonly pole: PoleOrbit;
   /** 肘/膝二维旋转环（E 模式 + 子选中 `${name}:elbow` 时上场——点 pole 球或肘环选中肘部：
    *  X 环 = 前臂/小腿绕自身纵轴扭转（位置全不动，只有朝向滚——上臂/大腿的旋转归肩部控制点，
@@ -81,7 +82,8 @@ const _fore0 = new Vector3();
  *   W 模式 = pole 双通道影子球（球贴在肘/膝的 ⊥ 链轴影子处：绕轴转 = 调朝向，外拽/内推 = 调弯度，
  *   手钉在原地或沿链轴滑动——「手定肘动」语义，上臂/大腿的旋转也经此（pole vector）实现）；
  *   E 模式 = 肘/膝二维旋转环（选中肘部时上场）：红环 = 前臂/小腿绕自身纵轴扭转（位置全不动），
- *   绿环 = 绕弯折轴伸缩（手/脚绕关节画弧、关节钉住不动——纯关节 FK）。
+ *   绿环 = 绕弯折轴伸缩（手/脚绕关节画弧、关节钉住不动——纯关节 FK）；
+ *   pole 球在 E 模式退化为可点标记留场——它是选中肘部的唯一入口（也是求解器的 poleTarget）。
  *  内置 roll 修正实测（A）。 */
 export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec): BuiltControl {
   const rootObj = ctx.bone(spec.rootBone);
@@ -259,13 +261,14 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     name: spec.name, kind: 'limb',
     targets: [target],
     // 端球参与 move 模式切换；端骨环走主选中体系，肘环走子选中（`${name}:elbow`，与主环互斥）；
-    // pole 球只归 W（onModeChange 切显隐）
+    // pole 球两种模式都在场（它还是 TwoBone 的 poleTarget，且是 E 模式选中肘部的唯一入口）：
+    // W = 双通道操纵器，E = 可点标记
     moveTargets: [target],
     rotateRings: rings ? [rings] : [],
     subRingGroups: [{ key: 'elbow', rings: [elbowRings] }],
     modifiers,
     onModeChange(mode) {
-      pole.visible = mode === 'move';
+      pole.setMarkerMode(mode === 'rotate');
     },
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);

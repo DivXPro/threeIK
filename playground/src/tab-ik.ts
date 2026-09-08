@@ -49,6 +49,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             color: 0x3388ff,
             carry: false, // 脚钉地：下蹲演示的基础（锚点 UpLeg 随髋动）
             endRotation: true, // ①脚朝向：rotate 模式下脚部旋转环
+            rootRotation: true, // 髋部 = 髋关节掰大腿（扭转+摆动，脚跟随）
             pole: { color: 0xffcc00, position: [0.25, 0.9, 1.2] },
           },
           {
@@ -57,6 +58,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             color: 0x22dddd,
             carry: false,
             endRotation: true,
+            rootRotation: true,
             pole: { color: 0xff9933, position: [-0.25, 0.9, 1.2] },
           },
           // 脊柱 FABRIK 拉躯干（Spine→Neck）

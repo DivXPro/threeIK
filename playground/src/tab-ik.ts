@@ -130,7 +130,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       };
       const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
-      // 操纵器模式（Maya W/E）：W = 移动球，E = 旋转环（双通道控制点：髋/脚/手 + 旋转专用：胸口/脖子/肩/脚尖；肘/膝 pole 常驻不切换）
+      // 操纵器模式（Maya W/E）：W = 移动球 + 肘/膝 pole 球（双通道影子球）；E = 旋转环
+      // （双通道控制点：髋/脚/手 + 旋转专用：胸口/脖子/肩/脚尖 + 肘/膝二维环：swivel + 伸缩）
       let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;

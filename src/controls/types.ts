@@ -74,6 +74,9 @@ export interface BuiltControl {
   readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */
   readonly modifiers: { modifier: Modifier; rootBone: string }[];
+  /** 操纵器模式（W/E）切换钩子：不进 targets/rotateRings 体系的操纵器（如肘环↔pole 球换班）
+   *  在此自行切显隐与交互；装配器在 build/select/setManipulatorMode 时逐个调用 */
+  onModeChange?(mode: ManipulatorMode): void;
   /** 首解（rig.update(0)）之后调用：设钳制、捕获携带偏移、实测 poleDirection */
   postSolve(): void;
   /** 每帧调用（carryAlong 之后）：环跟随、引导线等 */

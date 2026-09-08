@@ -30,17 +30,31 @@ function wrapPi(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
 }
 
+export interface RotateRingsOptions {
+  ringRadius?: number;
+  dragControl?: DragControl;
+  /** 只启用这些轴环（0-2 的子集，缺省全 3 根）：二维操纵器（如肘环）用 */
+  rings?: number[];
+  /** 视角环（绕视线轴的第 4 通道）开关，默认 true */
+  viewRing?: boolean;
+}
+
 /**
- * 旋转操纵器（Maya Rotate Tool 的球系等价物）：三根轴环（绕骨自身 X/Y/Z 轴转）
- * + 一圈面向相机的视角环（绕视线轴转）。数学环命中——射线与环平面求交，
+ * 旋转操纵器（Maya Rotate Tool 的球系等价物）：轴环（绕自身 X/Y/Z 轴转，可子集化）
+ * + 可选一圈面向相机的视角环（绕视线轴转）。数学环命中——射线与环平面求交，
  * 命中点到环心距离落在环半径容差内即命中，不依赖 mesh raycast。
  * hover/拖拽中的环高亮变黄（Maya 同款；材质实例级，互不影响）。
- * 本对象的世界四元数即「期望的骨骼全局朝向」：CopyTransformModifier(referenceObject: rings,
- * copyRotation) 据此驱动骨骼。朝向来源两选一——
- *  setOrientationCarry（FK 语义，掰骨控制点标配）：朝向 = 父骨世界朝向 × 局部偏移。
- *    父骨（前臂/小腿/脊柱下节）转动时端骨跟着相对转动，不钉绝对世界朝向；
- *    局部偏移初始 = 关节静止局部四元数，用户拖环时逐帧重捕；
- *  默认（未设携带）：非拖拽时每帧从关节世界朝向同步（跟随求解结果）。
+ * 输出两种模式——
+ *  朝向模式（默认）：本对象的世界四元数即「期望的骨骼全局朝向」，CopyTransformModifier
+ *    (referenceObject: rings, copyRotation) 据此驱动骨骼。朝向来源两选一——
+ *     setOrientationCarry（FK 语义，掰骨控制点标配）：朝向 = 父骨世界朝向 × 局部偏移。
+ *       父骨转动时端骨跟着相对转动，不钉绝对世界朝向；局部偏移初始 = 关节静止局部四元数，
+ *       用户拖环时逐帧重捕；
+ *     默认（未设携带）：非拖拽时每帧从关节世界朝向同步（跟随求解结果）。
+ *  增量模式（设了 onRotateDrag）：拖环不改写自身朝向，改为回调「按下以来的累计角」
+ *    （驱动外部通道用，如肘环 → 前臂旋转/伸缩）；朝向由 orientationSource 逐帧供给。
+ *    累计角而非逐事件增量：同一帧内连发多个 pointermove 时求解器尚未跑、骨骼位置还是
+ *    拖拽前的，逐事件增量 × 陈旧骨骼会丢旋转（净剩最后一笔）；累计角 × 拖前快照恒正确。
  */
 export class RotateRings extends Object3D {
   readonly ringRadius: number;
@@ -49,8 +63,8 @@ export class RotateRings extends Object3D {
   private carryParent: Object3D | null = null;
   private readonly localOffset = new Quaternion();
   private dragging = false;
-  private hoverRing = -1;     // 指针悬停的环（0-2 轴环，3 视角环；-1 无）
-  private dragRingIndex = -1; // 拖拽中的环序号
+  private hoverRing = -1;     // 指针悬停的环槽位（0..n-1 轴环槽，viewSlot 视角环；-1 无）
+  private dragRingIndex = -1; // 拖拽中的环槽位
   private interactive = true;
   private readonly dom: DragDom;
   private readonly camera: Camera;
@@ -60,8 +74,11 @@ export class RotateRings extends Object3D {
   private readonly onPointerMove: (e: DragPointerEvent) => void;
   private readonly onPointerUp: () => void;
   private readonly meshes: Mesh[] = [];
-  private readonly viewMesh: Mesh;
+  private readonly viewMesh: Mesh | null = null;
   private readonly materials: MeshBasicMaterial[] = [];
+  /** 槽位 → 轴序号（0-2）：启用的轴环子集；视角环槽 = ringAxisIndices.length（无视角环则 -1） */
+  private readonly ringAxisIndices: number[];
+  private readonly viewSlot: number = -1;
   // 拖拽状态（按下时冻结：轴/基向量/起始朝向；逐事件角度增量累加）
   private readonly dragAxis = new Vector3();
   private readonly basisU = new Vector3();
@@ -71,32 +88,42 @@ export class RotateRings extends Object3D {
   private totalDelta = 0;
   /** 命中按下时触发（选中机制用；装配器据此选中所属控制点） */
   onPress?: () => void;
+  /** 增量模式：拖环回调「按下以来的累计角」（axisIndex：0-2 轴环、3 视角环；axisWorld 为冻结拖轴，
+   *  只读勿持有）。设置后拖环不再改写自身朝向。用累计角 × 拖前快照驱动外部通道——
+   *  同一帧连发多个 move、求解器还没跑时用逐事件增量会丢旋转 */
+  onRotateDrag?: (axisIndex: number, totalAngle: number, axisWorld: Vector3) => void;
+  /** 增量模式的朝向源：非拖拽时每帧调用，返回值即环的世界朝向（如按当前姿势计算的肘坐标架） */
+  orientationSource?: (out: Quaternion) => void;
 
-  constructor(camera: Camera, dom: DragDom, options: { ringRadius?: number; dragControl?: DragControl } = {}) {
+  constructor(camera: Camera, dom: DragDom, options: RotateRingsOptions = {}) {
     super();
     this.camera = camera;
     this.dom = dom;
     this.dragControl = options.dragControl;
     this.ringRadius = options.ringRadius ?? 0.16;
+    this.ringAxisIndices = options.rings ?? [0, 1, 2];
 
-    for (let i = 0; i < 3; i++) {
-      const mat = new MeshBasicMaterial({ color: AXIS_COLORS[i], depthTest: false, transparent: true, opacity: 0.9 });
+    for (const axisIndex of this.ringAxisIndices) {
+      const mat = new MeshBasicMaterial({ color: AXIS_COLORS[axisIndex], depthTest: false, transparent: true, opacity: 0.9 });
       const mesh = new Mesh(_unitTorus, mat);
-      // 环平面 ⊥ 轴向：torus 轴 +Z 旋到 AXES[i]
-      if (i === 0) mesh.rotation.y = Math.PI / 2;       // +Z → +X
-      else if (i === 1) mesh.rotation.x = -Math.PI / 2; // +Z → +Y
+      // 环平面 ⊥ 轴向：torus 轴 +Z 旋到 AXES[axisIndex]
+      if (axisIndex === 0) mesh.rotation.y = Math.PI / 2;       // +Z → +X
+      else if (axisIndex === 1) mesh.rotation.x = -Math.PI / 2; // +Z → +Y
       mesh.scale.setScalar(this.ringRadius);
       mesh.renderOrder = 999;
       this.add(mesh);
       this.meshes.push(mesh);
       this.materials.push(mat);
     }
-    const viewMat = new MeshBasicMaterial({ color: VIEW_COLOR, depthTest: false, transparent: true, opacity: 0.6 });
-    this.viewMesh = new Mesh(_unitTorus, viewMat);
-    this.viewMesh.scale.setScalar(this.ringRadius * VIEW_RING_SCALE);
-    this.viewMesh.renderOrder = 998;
-    this.add(this.viewMesh); // 朝向每帧由 update 公告板化
-    this.materials.push(viewMat);
+    if (options.viewRing ?? true) {
+      const viewMat = new MeshBasicMaterial({ color: VIEW_COLOR, depthTest: false, transparent: true, opacity: 0.6 });
+      this.viewMesh = new Mesh(_unitTorus, viewMat);
+      this.viewMesh.scale.setScalar(this.ringRadius * VIEW_RING_SCALE);
+      this.viewMesh.renderOrder = 998;
+      this.add(this.viewMesh); // 朝向每帧由 update 公告板化
+      this.materials.push(viewMat);
+      this.viewSlot = this.ringAxisIndices.length;
+    }
 
     this.onPointerDown = (e) => {
       if (!this.interactive || !this.visible) return;
@@ -105,7 +132,7 @@ export class RotateRings extends Object3D {
       if (!hit) return;
       this.onPress?.();
       this.dragging = true;
-      this.dragRingIndex = hit.index;
+      this.dragRingIndex = hit.slot;
       this.applyRingColors();
       this.dragAxis.copy(hit.axis);
       // 右手系角度基：v = axis×u，atan2(w·v, w·u) 即绕轴正方向角
@@ -127,7 +154,7 @@ export class RotateRings extends Object3D {
         if (this.interactive && this.visible) {
           this.setRay(e);
           const hit = this.pickRing();
-          this.hoverRing = hit ? hit.index : -1;
+          this.hoverRing = hit ? hit.slot : -1;
         } else {
           this.hoverRing = -1;
         }
@@ -142,6 +169,12 @@ export class RotateRings extends Object3D {
       const delta = wrapPi(angle - this.lastAngle);
       this.totalDelta += delta;
       this.lastAngle = angle;
+      if (this.onRotateDrag) {
+        // 增量模式：不改写自身朝向，把「按下以来的累计角」交给外部通道
+        const axisIndex = this.dragRingIndex === this.viewSlot ? 3 : this.ringAxisIndices[this.dragRingIndex]!;
+        this.onRotateDrag(axisIndex, this.totalDelta, this.dragAxis);
+        return;
+      }
       // 世界空间：q = axisAngle(轴, 总角) × 起始朝向；写回父局部
       _q.setFromAxisAngle(this.dragAxis, this.totalDelta).multiply(this.startQuat);
       this.writeWorldQuat(_q);
@@ -196,7 +229,7 @@ export class RotateRings extends Object3D {
     this.visible = v;
   }
 
-  /** 每帧调用（求解之后）：跟随关节位置；非拖拽时朝向 = 携带父骨 × 局部偏移（未设携带则同步关节）；
+  /** 每帧调用（求解之后）：跟随关节位置；非拖拽时朝向 = 朝向源/携带父骨/关节（按优先级）；
    *  视角环公告板化；屏幕恒定大小（Maya 操纵器同款）：按相机距离缩放，ringRadius 是参照距离 3.5m 处的世界半径 */
   update(): void {
     if (this.joint) {
@@ -205,20 +238,26 @@ export class RotateRings extends Object3D {
       if (this.parent) this.parent.worldToLocal(_parentPos);
       this.position.copy(_parentPos);
       if (!this.dragging) {
-        if (this.carryParent) {
+        if (this.orientationSource) {
+          this.orientationSource(_q);
+          this.writeWorldQuat(_q);
+        } else if (this.carryParent) {
           this.carryParent.getWorldQuaternion(_q).multiply(this.localOffset);
+          this.writeWorldQuat(_q);
         } else {
           this.joint.getWorldQuaternion(_q);
+          this.writeWorldQuat(_q);
         }
-        this.writeWorldQuat(_q);
       }
     }
     this.getWorldPosition(_c);
     this.scale.setScalar(this.camera.position.distanceTo(_c) / MANIPULATOR_REF_DIST);
     // 视角环面向相机：local = thisWorld⁻¹ × cameraWorld
-    this.getWorldQuaternion(_q).invert();
-    this.camera.getWorldQuaternion(_pq);
-    this.viewMesh.quaternion.copy(_q.multiply(_pq));
+    if (this.viewMesh) {
+      this.getWorldQuaternion(_q).invert();
+      this.camera.getWorldQuaternion(_pq);
+      this.viewMesh.quaternion.copy(_q.multiply(_pq));
+    }
   }
 
   dispose(): void {
@@ -239,23 +278,24 @@ export class RotateRings extends Object3D {
     _ray.setFromCamera(_ndc, this.camera);
   }
 
-  /** 命中检测：返回得分最小（命中点最贴环）的环；无命中返回 null。index：0-2 轴环，3 视角环 */
-  private pickRing(): { axis: Vector3; point: Vector3; index: number } | null {
+  /** 命中检测：返回得分最小（命中点最贴环）的环；无命中返回 null。slot：轴环槽位或 viewSlot */
+  private pickRing(): { axis: Vector3; point: Vector3; slot: number } | null {
     this.getWorldPosition(_c);
     this.getWorldQuaternion(_pq);
     const tol = this.camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER + this.ringRadius * this.scale.x * RING_TUBE;
-    let best: { axis: Vector3; point: Vector3; index: number; score: number } | null = null;
-    for (let i = 0; i < 4; i++) {
-      const isView = i === 3;
+    let best: { axis: Vector3; point: Vector3; slot: number; score: number } | null = null;
+    const count = this.ringAxisIndices.length + (this.viewMesh ? 1 : 0);
+    for (let slot = 0; slot < count; slot++) {
+      const isView = slot === this.viewSlot;
       if (isView) this.camera.getWorldDirection(_axis);
-      else _axis.copy(AXES[i]!).applyQuaternion(_pq);
+      else _axis.copy(AXES[this.ringAxisIndices[slot]!]!).applyQuaternion(_pq);
       const radius = this.ringRadius * this.scale.x * (isView ? VIEW_RING_SCALE : 1); // 屏幕恒定大小后的实际世界半径
       _plane.setFromNormalAndCoplanarPoint(_axis, _c);
       const p = _ray.ray.intersectPlane(_plane, _p);
       if (!p) continue;
       const score = Math.abs(_w.copy(p).sub(_c).length() - radius);
       if (score <= tol && (!best || score < best.score)) {
-        best = { axis: _axis.clone(), point: p.clone(), index: i, score };
+        best = { axis: _axis.clone(), point: p.clone(), slot, score };
       }
     }
     return best;
@@ -265,7 +305,7 @@ export class RotateRings extends Object3D {
   private applyRingColors(): void {
     const active = this.dragging ? this.dragRingIndex : this.hoverRing;
     for (let i = 0; i < this.materials.length; i++) {
-      const base = i < 3 ? AXIS_COLORS[i]! : VIEW_COLOR;
+      const base = i === this.viewSlot ? VIEW_COLOR : AXIS_COLORS[this.ringAxisIndices[i]!]!;
       this.materials[i]!.color.setHex(i === active ? RING_HIGHLIGHT_COLOR : base);
     }
   }

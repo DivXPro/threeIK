@@ -224,13 +224,13 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('pole 双通道·rotate 模式：pole 是纯位置控制点不收起，拖球照常沿环调肘朝向（端球不动）', () => {
+  it('肘部操纵器 W/E 换班：W = pole 球（可拖），E = 肘环上场（球收起不可拖，环常驻不需选中）', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
       rig, scene, camera, dom,
       controls: [
-        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, keepAlive: 0.96 }, // 留弯度才能测 pole 摆膝
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true, keepAlive: 0.96 },
       ],
     });
     scene.updateMatrixWorld(true);
@@ -238,35 +238,149 @@ describe('createSkeletonControls', () => {
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
-    const midBefore = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
-    const targetBefore = legH.target.position.clone();
 
-    ctl.setManipulatorMode('rotate');
-    // 端球退化成可点标记（不藏）；端骨环只在选中后上场（未选中）；pole 不参战：球仍显示、可拖
-    expect(legH.target.ball.visible).toBe(true);
-    expect(legH.rings!.visible).toBe(false);
-    expect(legH.pole.ball.visible).toBe(true);
-
-    const ballPos = legH.pole.ball.getWorldPosition(new Vector3());
-    const hip = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
-    const axis = legH.target.getWorldPosition(new Vector3()).sub(hip).normalize();
-    const centerA = hip.clone().addScaledVector(axis, ballPos.clone().sub(hip).dot(axis));
-    const ringP = ballPos.clone().sub(centerA)
-      .applyQuaternion(new Quaternion().setFromAxisAngle(axis, Math.PI / 2))
-      .add(centerA);
-    dom.fire('pointerdown', clientFor(camera, ballPos));
+    // 默认 move：pole 球显示可拖，肘环收起；端骨环（endRotation）也不上场（move 模式）
+    expect(legH.pole.visible).toBe(true);
+    expect(legH.elbowRings.visible).toBe(false);
+    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(true);
-    // 与 move 模式同一拖法：球沿环到 +x 侧（半径不变 = 纯角度）→ 膝转向 +x，端球（弯度未变）不动
-    dom.fire('pointermove', clientFor(camera, ringP));
-    rig.update(0);
-    ctl.update();
-    scene.updateMatrixWorld(true);
-
-    expect(legH.target.position.distanceTo(targetBefore)).toBeLessThan(1e-6);
-    const midPos = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
-    expect(midPos.x).toBeGreaterThan(midBefore.x + 0.02);
     dom.fire('pointerup', {});
+
+    // rotate：pole 球收起不可拖，肘环上场（与球同待遇：常驻可用、不需选中）；端骨环仍需选中
+    ctl.setManipulatorMode('rotate');
+    expect(legH.pole.visible).toBe(false);
+    expect(legH.elbowRings.visible).toBe(true);
+    expect(legH.rings!.visible).toBe(false); // 未选中
+    dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(false);
+    dom.fire('pointerup', {});
+    expect(ctl.getSelected()).toBe(null); // 点肘环/pole 只认领不选中
+
+    // 切回 move：球回环收
+    ctl.setManipulatorMode('move');
+    expect(legH.pole.visible).toBe(true);
+    expect(legH.elbowRings.visible).toBe(false);
+    ctl.dispose();
+  });
+
+  it('肘环·bend（Y 环绕弯折轴）= 伸缩：手绕肘画弧、肘钉住不动（纯肘关节 FK）', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96 },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+    ctl.setManipulatorMode('rotate');
+
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const knee0 = knee(); // 留弯姿势：(0.1, 0.616, -0.112) 附近
+    const footBefore = legH.target.getWorldPosition(new Vector3());
+    // bend 环 ⊥ 弯折轴（此姿势 ≈+x）：环上 +y 点拖到 +z 点 = 绕弯折轴 +90°（前臂在弯折面内收）
+    const r = ringR(legH.elbowRings);
+    dom.fire('pointerdown', clientFor(camera, knee0.clone().add(new Vector3(0, r, 0))));
+    expect(legH.elbowRings.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, knee0.clone().add(new Vector3(0, 0, r))));
+    dom.fire('pointerup', {});
+    converge();
+
+    // 肘钉住：空间位置不变；手画弧收向身后（z 大幅变负、x 不变），前臂长度不变
+    expect(knee().distanceTo(knee0)).toBeLessThan(1e-3);
+    const foot = legH.target.getWorldPosition(new Vector3());
+    expect(foot.distanceTo(footBefore)).toBeGreaterThan(0.1);
+    expect(Math.abs(foot.x - 0.1)).toBeLessThan(0.01);
+    expect(foot.z).toBeLessThan(-0.4);
+    expect(foot.distanceTo(knee())).toBeCloseTo(0.4, 3);
+    // pole 与膝真相同步（球虽收起，方向通道不漂移）：球 ≈ 膝
+    expect(legH.pole.ball.getWorldPosition(new Vector3()).distanceTo(knee())).toBeLessThan(0.03);
+    ctl.dispose();
+  });
+
+  it('肘环·帧内连发 move 不丢角度：累计角 × 拖前前臂快照，两次 move 与一次拖到 90° 同效', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96 },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+    ctl.setManipulatorMode('rotate');
+
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const knee0 = knee();
+    // bend 环（⊥ 弯折轴 ≈+x）：+y 点 → 45° 点 → +z 点，两次 move 之间【不求解】（骨骼位置是拖前快照）
+    const r = ringR(legH.elbowRings);
+    const p45 = knee0.clone().add(new Vector3(0, r / Math.SQRT2, r / Math.SQRT2));
+    const p90 = knee0.clone().add(new Vector3(0, 0, r));
+    dom.fire('pointerdown', clientFor(camera, knee0.clone().add(new Vector3(0, r, 0))));
+    expect(legH.elbowRings.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, p45));
+    dom.fire('pointermove', clientFor(camera, p90));
+    dom.fire('pointerup', {});
+    converge();
+
+    // 若逐事件读骨骼：第二笔 move 会把第一笔的旋转丢掉（净剩 45°，z ≈ −0.30）；
+    // 累计角 × 拖前快照：与单次拖到 90° 同效（手弧到 z < −0.4），肘钉住、前臂保长
+    expect(knee().distanceTo(knee0)).toBeLessThan(1e-3);
+    const foot = legH.target.getWorldPosition(new Vector3());
+    expect(foot.z).toBeLessThan(-0.4);
+    expect(Math.abs(foot.x - 0.1)).toBeLessThan(0.01);
+    expect(foot.distanceTo(knee())).toBeCloseTo(0.4, 3);
+    ctl.dispose();
+  });
+
+  it('肘环·swivel（X 环绕上臂轴）= 旋转：前臂绕上臂轴滚、手绕轴画弧，肘钉住不动、弯度不变', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96 },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+    ctl.setManipulatorMode('rotate');
+
+    const hip = rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const knee0 = knee();
+    const footBefore = legH.target.getWorldPosition(new Vector3());
+    const armAxis = knee0.clone().sub(hip).normalize(); // 上臂轴（swivel 环 ⊥ 它）
+    // 环上两个相距 +90° 的点：u2 = armAxis×u1（绕上臂轴 +90°）
+    const r = ringR(legH.elbowRings);
+    const u1 = new Vector3().crossVectors(armAxis, new Vector3(1, 0, 0)).normalize();
+    const u2 = new Vector3().crossVectors(armAxis, u1);
+    dom.fire('pointerdown', clientFor(camera, knee0.clone().addScaledVector(u1, r)));
+    expect(legH.elbowRings.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, knee0.clone().addScaledVector(u2, r)));
+    dom.fire('pointerup', {});
+    converge();
+
+    // 肘钉住；手绕「肩→肘」直线滚开（到线距离不变、链距不变 = 弯度没变、x 甩到负侧）
+    expect(knee().distanceTo(knee0)).toBeLessThan(1e-3);
+    const foot = legH.target.getWorldPosition(new Vector3());
+    expect(foot.distanceTo(footBefore)).toBeGreaterThan(0.1);
+    expect(foot.x).toBeLessThan(0.05);
+    expect(foot.distanceTo(knee())).toBeCloseTo(0.4, 3);
+    const distToLine = (p: Vector3) => {
+      const w = p.clone().sub(hip);
+      return w.addScaledVector(armAxis, -w.dot(armAxis)).length();
+    };
+    expect(distToLine(foot)).toBeCloseTo(distToLine(footBefore), 3);
+    expect(foot.distanceTo(hip)).toBeCloseTo(footBefore.distanceTo(hip), 3);
     ctl.dispose();
   });
 
@@ -375,7 +489,7 @@ describe('createSkeletonControls', () => {
     expect(scene.children.filter((c) => c instanceof DragTarget).length).toBe(0);
   });
 
-  it('操纵器模式：双通道控制点球↔环切换，纯位置控制点（含 pole）不参战', () => {
+  it('操纵器模式：双通道控制点球↔环切换，肘部 pole 球↔肘环换班，纯位置控制点（chain）不参战', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -403,12 +517,13 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
 
-    // rotate：双通道控制点的球退化成可点标记（不藏、不可拖）；环只在选中后上场；
-    // pole 是纯位置控制点，不收起、照常可拖
+    // rotate：双通道控制点的球退化成可点标记（不藏、不可拖）；端骨环只在选中后上场；
+    // pole 球收起、肘环换班上场（常驻可用，不需选中）
     ctl.setManipulatorMode('rotate');
     expect(hipsH.rings!.visible).toBe(false); // 未选中：环不上场
     expect(legH.target.ball.visible).toBe(true); // 球变标记，不藏
-    expect(legH.pole.ball.visible).toBe(true);
+    expect(legH.pole.visible).toBe(false);
+    expect(legH.elbowRings.visible).toBe(true);
     // 标记点击 = 选中，不进入拖拽；选中后该控制点的环上场
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
     expect(legH.target.isDragging).toBe(false);
@@ -424,9 +539,13 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0, hipsRingR, 0))));
     expect(hipsH.rings!.isDragging).toBe(true);
     dom.fire('pointerup', {});
-    // pole 在 rotate 模式仍可拖（与 chain 等纯位置控制点同待遇）
+    // pole 在 rotate 模式收起不可拖；换班上场的肘环可拖（bend 环 ⊥ 弯折轴 ≈+x，取环上 +y 点）
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
-    expect(legH.pole.isDragging).toBe(true);
+    expect(legH.pole.isDragging).toBe(false);
+    dom.fire('pointerup', {});
+    const kneePos = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    dom.fire('pointerdown', clientFor(camera, kneePos.clone().add(new Vector3(0, ringR(legH.elbowRings), 0))));
+    expect(legH.elbowRings.isDragging).toBe(true);
     dom.fire('pointerup', {});
     // 纯位置控制点（chain）两种模式都可用
     dom.fire('pointerdown', clientFor(camera, ctl.get<ChainControlHandle>('spine')!.target.getWorldPosition(new Vector3())));

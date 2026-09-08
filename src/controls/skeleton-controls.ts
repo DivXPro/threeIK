@@ -213,6 +213,7 @@ export class SkeletonControls {
       r.setInteractive(show);
       r.setVisible(show);
     }
+    c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球↔肘环）换班
   }
 
   private buildControl(spec: ControlPointSpec): BuiltControl {

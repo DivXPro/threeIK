@@ -101,6 +101,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     ballRadius: spec.ballRadius ?? ctx.defaults.ballRadius,
     dragControl: ctx.dragControl,
   });
+  pole.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头（W 模式 + 选中肘部时上场）
   pole.bind(rootObj, target); // 链轴 = 根骨→端球（端球被可达钳制收拢过，与实际链一致）
   // pole 球/肘环 = 肘/膝自己的操纵器：点按 = 选中肘部子目标（`${name}:elbow`）——
   // W 模式选不选中它都在场（纯位置轨道球），E 模式选中后肘环上场、手臂本体的环不受影响
@@ -269,6 +270,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     modifiers,
     onModeChange(mode) {
       pole.setMarkerMode(mode === 'rotate');
+    },
+    onSelectionChange(sub) {
+      pole.setSelected(sub === 'elbow'); // 选中肘部才出轴箭头（W 模式；marker 内部再挡一层）
     },
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);

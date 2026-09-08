@@ -80,6 +80,9 @@ export interface BuiltControl {
   /** 操纵器模式（W/E）切换钩子：不进 targets/rotateRings 体系的操纵器（如肘环↔pole 球换班）
    *  在此自行切显隐与交互；装配器在 build/select/setManipulatorMode 时逐个调用 */
   onModeChange?(mode: ManipulatorMode): void;
+  /** 子选中变化钩子：subKey = 当前选中的子目标（`name:sub` 的 sub；主选中/未选中都为 null）。
+   *  装配器在 select/setManipulatorMode 时逐个调用（如 limb 据此开关 pole 球的轴箭头） */
+  onSelectionChange?(subKey: string | null): void;
   /** 首解（rig.update(0)）之后调用：设钳制、捕获携带偏移、实测 poleDirection */
   postSolve(): void;
   /** 每帧调用（carryAlong 之后）：环跟随、引导线等 */

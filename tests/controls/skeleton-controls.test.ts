@@ -402,6 +402,53 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
+  it('肘部轴箭头：W 模式选中肘部才上场，拖 X 箭头单轴挪球（落回轨道分解朝向+弯度），E 模式收起', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96 },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    // 箭头视图（私有字段，测试直读）
+    const arrows = (legH.pole as unknown as { arrows: { group: Object3D; visible: boolean } }).arrows;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+
+    // 未选中 / 选中手臂本体：箭头都不上场；选中肘部（W 模式）：上场
+    expect(arrows.visible).toBe(false);
+    ctl.select('leg');
+    expect(arrows.visible).toBe(false);
+    ctl.select('leg:elbow');
+    converge(); // place() 摆好箭头位置/缩放
+    expect(arrows.visible).toBe(true);
+
+    // 拖 +X 箭头（move 带 y/z 抖动）：球严格沿世界 X 单轴移动，膝盖真被带动（操纵器驱动链）
+    const knee0 = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const ball0 = legH.pole.ball.getWorldPosition(new Vector3());
+    const lenW = arrows.group.scale.x;
+    dom.fire('pointerdown', clientFor(camera, ball0.clone().add(new Vector3(lenW * 0.6, 0, 0))));
+    expect(legH.pole.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, ball0.clone().add(new Vector3(lenW * 0.6 + 0.15, 0.4, 0.4))));
+    dom.fire('pointerup', {});
+    converge();
+    const ball1 = legH.pole.ball.getWorldPosition(new Vector3());
+    expect(ball1.x - ball0.x).toBeGreaterThan(0.05); // 主位移沿 X
+    // 单轴语义：z 严格不变（拖轴 ⊥ 竖直链轴，z 分量在冻结架上原样保留）；
+    // y 不断言——弯度变化会让环心沿链轴（±y）滑动，是径向通道的合法副产物
+    expect(Math.abs(ball1.z - ball0.z)).toBeLessThan(0.02);
+    const knee1 = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    expect(knee1.distanceTo(knee0)).toBeGreaterThan(0.01);
+
+    // E 模式：箭头收起（球退化为标记）
+    ctl.setManipulatorMode('rotate');
+    expect(arrows.visible).toBe(false);
+    ctl.dispose();
+  });
+
   it('pole 双通道·径向拖 = 弯度：外拽手收回膝弯出（朝向不变），推回轴心腿伸直', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);

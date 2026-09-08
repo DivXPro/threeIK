@@ -168,7 +168,7 @@ describe('DragTarget', () => {
     t.setSelected(true);
     // 读实例级箭头材质（私有字段，测试经箭头组子节点取 shaft 材质）
     const matOf = (i: number) => {
-      const g = (t as unknown as { arrowsGroup: Object3D }).arrowsGroup;
+      const g = (t as unknown as { arrows: { group: Object3D } }).arrows.group;
       const arrow = g.children[i] as Object3D;
       return (arrow.children[0] as unknown as { material: { color: { getHex(): number } } }).material;
     };

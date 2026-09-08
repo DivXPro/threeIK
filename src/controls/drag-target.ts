@@ -1,4 +1,7 @@
-import { Camera, CylinderGeometry, ConeGeometry, MathUtils, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+import { Camera, MathUtils, Mesh, MeshBasicMaterial, Object3D, Plane, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+import { AxisArrows, HIT_TOLERANCE_PER_METER, MANIPULATOR_REF_DIST, rayAxisClosest } from './axis-arrows';
+
+export { MANIPULATOR_REF_DIST };
 
 // 约束计算模块临时量（applyConstraints 在拖拽热路径上，不逐帧分配）
 const _c = new Vector3(); // 锚点世界位置
@@ -6,25 +9,6 @@ const _off = new Vector3();
 const _ortho = new Vector3();
 const _snap = new Vector3(); // snapIntoConstraints 的命中点（与 _c/_off/_ortho 不别名）
 const _planeHit = new Vector3(); // moveTo 的拖拽平面命中点
-// 轴箭头拾取/拖拽临时量
-const _ro = new Vector3();
-const _w0 = new Vector3();
-const _axisW = new Vector3();
-const _wq = new Quaternion();
-
-// 拖拽命中间隙：按相机距离换算的世界容差（~26px 屏幕等效），让小球在手机上也能点到
-const HIT_TOLERANCE_PER_METER = 0.011;
-
-/** 操纵器屏幕恒定大小的参照距离（米）：相机在这个距离时，箭头/环的世界尺寸 = 设定值；
- *  近了缩小、远了放大，屏幕上看起来永远一样大（Maya 操纵器同款行为） */
-export const MANIPULATOR_REF_DIST = 3.5;
-
-// 轴箭头共享几何（模块级单例，不随实例 dispose）：单位箭头沿 +Y，总长约 1，实例按 arrowLen 缩放
-const ARROW_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
-const ARROW_HIGHLIGHT_COLOR = 0xffee33; // hover/拖拽中的轴高亮色（Maya 同款黄）
-const _shaftGeo = new CylinderGeometry(0.02, 0.02, 0.8, 8).translate(0, 0.4, 0);   // 0→0.8
-const _tipGeo = new ConeGeometry(0.095, 0.2, 12).translate(0, 0.9, 0);             // 0.8→1.0
-const _AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 
 /** 拖球期间禁用视角控制（OrbitControls）的计数锁接口，由应用侧注入（playground scene.ts 同款） */
 export interface DragControl {
@@ -90,15 +74,11 @@ export class DragTarget extends Object3D {
   // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
   private carryAnchor: Object3D | null = null;
   private readonly carryOffset = new Vector3();
-  // 轴箭头（Maya Move 样式）：拖箭头 = 沿该世界轴单轴移动；中心球 = 屏幕平面自由拖（默认路径）。
-  // 箭头随球显隐（setVisible），根部 1/4 杆长不响应命中（让给中心球）；
-  // hover/拖拽中的轴高亮（材质实例级——改色不影响其他 DragTarget）
+  // 轴箭头（Maya Move 样式移动操纵器，视图/命中抽在 AxisArrows）：拖箭头 = 沿该世界轴单轴移动；
+  // 中心球 = 屏幕平面自由拖（默认路径）。箭头随球显隐（setVisible）+ 选中态（setSelected）
   private arrowsOn = false;
   private arrowLen = 0;
-  private arrowsGroup: Object3D | null = null;
-  private arrowMats: MeshBasicMaterial[] = [];
-  private hoverAxis = -1;   // 指针悬停的轴（-1 无）
-  private dragAxisIndex = -1; // 轴拖拽中的轴序号
+  private arrows: AxisArrows | null = null;
   // 轴拖拽状态（按下时冻结锚点与轴；逐事件求射线相对轴线的最近参量，固定锚点防钳制漂移）
   private axisDragging = false;
   private readonly dragAxisVec = new Vector3();
@@ -136,44 +116,6 @@ export class DragTarget extends Object3D {
       const r = dom.getBoundingClientRect();
       ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     };
-    // 射线 vs 轴线的最近参量：t 沿轴（世界单位，可负）、dist 为两线最近距离；
-    // 平行或最近点在射线身后返回 false（写入 pick）
-    const rayAxisClosest = (axis: Vector3, center: Vector3): boolean => {
-      _ro.copy(ray.ray.origin);
-      _w0.copy(_ro).sub(center);
-      const rd = ray.ray.direction;
-      const d = rd.dot(axis);
-      const denom = 1 - d * d;
-      if (denom < 1e-10) return false;
-      const e2 = _w0.dot(rd);
-      const f = _w0.dot(axis);
-      const t = (f - e2 * d) / denom;
-      const s = t * d - e2;
-      if (s < 0) return false;
-      _off.copy(_w0).addScaledVector(rd, s).addScaledVector(axis, -t); // w0 + s·rd − t·axis
-      pick.t = t;
-      pick.dist = _off.length();
-      return true;
-    };
-    // 轴箭头命中挑选（调用前填好 _c = 球心世界位置、ray 已 setFromCamera）：
-    // 返回最近命中轴序号（无命中 -1），命中参量写入 outT。根部 1/4 杆长不算（中心球地盘）
-    const pickAxisIndex = (outT: { t: number }): number => {
-      if (!this.arrowsGroup || !this.arrowsGroup.visible) return -1;
-      this.getWorldQuaternion(_wq);
-      // 命中区长度 = 视觉杆长：单位箭头几何总长 1 × 组缩放（updateFrame 已含 arrowLen，勿再乘）
-      const arrowLenWorld = this.arrowsGroup.scale.x;
-      const tolerance = camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER;
-      let best = -1;
-      let bestDist = Infinity;
-      for (let i = 0; i < 3; i++) {
-        _axisW.copy(_AXES[i]!).applyQuaternion(_wq);
-        if (!rayAxisClosest(_axisW, _c)) continue;
-        if (pick.t < arrowLenWorld * 0.25 || pick.t > arrowLenWorld * 1.15) continue;
-        if (pick.dist > tolerance + arrowLenWorld * 0.02) continue;
-        if (pick.dist < bestDist) { best = i; bestDist = pick.dist; outT.t = pick.t; }
-      }
-      return best;
-    };
     // 监听器保存为字段引用，dispose 可移除（编辑器多视图/页签切换防泄漏）
     this.onPointerDown = (e: DragPointerEvent) => {
       if (!this.interactive || !this.ball.visible) return;
@@ -181,18 +123,19 @@ export class DragTarget extends Object3D {
       ray.setFromCamera(ndc, camera);
       // 容差命中：raycast 缩小版球体容易脱靶（尤其触屏），按相机距离给射线一个世界余量
       this.ball.getWorldPosition(_c);
-      const tolerance = camera.position.distanceTo(_c) * HIT_TOLERANCE_PER_METER;
+      const cameraDist = camera.position.distanceTo(_c);
+      const tolerance = cameraDist * HIT_TOLERANCE_PER_METER;
       // 轴箭头优先于中心球命中
       const axisT = { t: 0 };
-      const best = pickAxisIndex(axisT);
+      const best = this.arrows?.pick(ray.ray, _c, cameraDist, axisT) ?? -1;
       if (best >= 0) {
         this.onPress?.();
         if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
         this.dragging = true;
         this.axisDragging = true;
-        this.dragAxisIndex = best;
-        this.applyArrowColors();
-        this.dragAxisVec.copy(_AXES[best]!).applyQuaternion(_wq);
+        this.arrows!.dragAxisIndex = best;
+        this.arrows!.applyColors();
+        this.arrows!.axisWorld(best, this.dragAxisVec);
         this.dragAxisT0 = axisT.t;
         this.dragStartPos.copy(this.getWorldPosition(new Vector3()));
         dom.setPointerCapture(e.pointerId);
@@ -221,19 +164,19 @@ export class DragTarget extends Object3D {
       ray.setFromCamera(ndc, camera);
       if (!this.dragging) {
         // hover 高亮：箭头可见时挑出悬停轴，否则清空
-        if (this.interactive && this.ball.visible && this.arrowsGroup?.visible) {
+        if (this.interactive && this.ball.visible && this.arrows?.visible) {
           this.ball.getWorldPosition(_c);
           const ht = { t: 0 };
-          this.hoverAxis = pickAxisIndex(ht);
-        } else {
-          this.hoverAxis = -1;
+          this.arrows.hoverAxis = this.arrows.pick(ray.ray, _c, camera.position.distanceTo(_c), ht);
+        } else if (this.arrows) {
+          this.arrows.hoverAxis = -1;
         }
-        this.applyArrowColors();
+        this.arrows?.applyColors();
         return;
       }
       if (this.axisDragging) {
         // 单轴移动：新位置 = 抓取锚点 + 轴 ×（当前参量 − 抓取参量）；锚点固定，钳制不漂移
-        if (rayAxisClosest(this.dragAxisVec, this.dragStartPos)) {
+        if (rayAxisClosest(ray.ray, this.dragAxisVec, this.dragStartPos, pick)) {
           hit.copy(this.dragStartPos).addScaledVector(this.dragAxisVec, pick.t - this.dragAxisT0);
           this.applyDragPoint(hit);
         }
@@ -246,9 +189,11 @@ export class DragTarget extends Object3D {
     this.onPointerUp = () => {
       this.dragging = false;
       this.axisDragging = false;
-      this.dragAxisIndex = -1;
-      this.hoverAxis = -1; // 下一次 pointermove 重算
-      this.applyArrowColors();
+      if (this.arrows) {
+        this.arrows.dragAxisIndex = -1;
+        this.arrows.hoverAxis = -1; // 下一次 pointermove 重算
+        this.arrows.applyColors();
+      }
       this.releaseControl();
     };
     dom.addEventListener('pointerdown', this.onPointerDown);
@@ -287,21 +232,13 @@ export class DragTarget extends Object3D {
 
   /** 每帧调用（ctl.update）：轴箭头屏幕恒定大小——按相机距离换算世界缩放 */
   updateFrame(): void {
-    if (!this.arrowsGroup || !this.arrowsGroup.visible) return;
+    if (!this.arrows?.visible) return;
     this.ball.getWorldPosition(_c);
-    this.arrowsGroup.scale.setScalar(this.arrowLen * (this.camera.position.distanceTo(_c) / MANIPULATOR_REF_DIST));
+    this.arrows.updateScale(this.camera.position.distanceTo(_c));
   }
 
   private syncArrowsVisibility(): void {
-    if (this.arrowsGroup) this.arrowsGroup.visible = this.arrowsOn && this.selected && this.ball.visible;
-  }
-
-  /** 轴箭头配色：拖拽中的轴 > 悬停轴 > 各色；无箭头材质时空调用 */
-  private applyArrowColors(): void {
-    const active = this.axisDragging ? this.dragAxisIndex : this.hoverAxis;
-    for (let i = 0; i < this.arrowMats.length; i++) {
-      this.arrowMats[i]!.color.setHex(i === active ? ARROW_HIGHLIGHT_COLOR : ARROW_COLORS[i]!);
-    }
+    this.arrows?.setVisible(this.arrowsOn && this.selected && this.ball.visible);
   }
 
   /** 开关轴箭头（Maya Move 样式移动操纵器）：拖箭头 = 沿该世界轴单轴移动。
@@ -309,25 +246,10 @@ export class DragTarget extends Object3D {
    *  重复调用不重复建。箭头只在控制点被选中时显示（setSelected） */
   setAxisHandles(on: boolean, len?: number): void {
     this.arrowsOn = on;
-    if (on && !this.arrowsGroup) {
+    if (on && !this.arrows) {
       this.arrowLen = len ?? this.ballRadius * 8;
-      // 材质实例级（hover/拖拽高亮要改色，不能用共享材质影响其他 DragTarget）；几何仍共享
-      this.arrowMats = ARROW_COLORS.map((color) => new MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }));
-      const g = new Object3D();
-      for (let i = 0; i < 3; i++) {
-        const arrow = new Object3D();
-        const shaft = new Mesh(_shaftGeo, this.arrowMats[i]!);
-        const tip = new Mesh(_tipGeo, this.arrowMats[i]!);
-        shaft.renderOrder = 999;
-        tip.renderOrder = 999;
-        arrow.add(shaft, tip);
-        if (i === 0) arrow.rotation.z = -Math.PI / 2; // 单位箭头 +Y → +X
-        else if (i === 2) arrow.rotation.x = Math.PI / 2; // +Y → +Z
-        g.add(arrow);
-      }
-      g.scale.setScalar(this.arrowLen);
-      this.arrowsGroup = g;
-      this.add(g);
+      this.arrows = new AxisArrows(this.arrowLen);
+      this.add(this.arrows.group);
     }
     this.syncArrowsVisibility();
   }
@@ -440,10 +362,8 @@ export class DragTarget extends Object3D {
     this.carryAnchor = null;
     this.dragging = false; // dispose 中途拖拽：状态一并复位，isDragging 不留陈旧 true
     this.axisDragging = false;
-    this.dragAxisIndex = -1;
-    this.hoverAxis = -1;
-    for (const m of this.arrowMats) m.dispose();
-    this.arrowMats = [];
+    this.arrows?.dispose();
+    this.arrows = null;
     this.releaseControl();
   }
 

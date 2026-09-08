@@ -234,6 +234,7 @@ export class SkeletonControls {
       }
     }
     c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球换班）
+    c.onSelectionChange?.(subSelected); // 子选中钩子（pole 球轴箭头等）
   }
 
   private buildControl(spec: ControlPointSpec): BuiltControl {

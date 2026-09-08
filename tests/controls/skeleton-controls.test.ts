@@ -843,4 +843,26 @@ describe('createSkeletonControls', () => {
     expect(spine.getWorldPosition(new Vector3()).distanceTo(spinePosBefore)).toBeLessThan(1e-6); // 只拷旋转不碰位置
     ctl.dispose();
   });
+
+  it('bone·markerBone：标记球跟随另一根骨（分流拥挤关节），环与作用骨不动；点标记照常选中', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [{ kind: 'bone', name: 'neckC', bone: 'Neck', markerBone: 'Head' }],
+    });
+    const h = ctl.get<BoneControlHandle>('neckC')!;
+    scene.updateMatrixWorld(true);
+    // 标记球在 Head（分流位置），环心在 Neck（作用骨）
+    expect(h.marker.getWorldPosition(new Vector3()).distanceTo(
+      rig.getBoneAt(rig.boneIndex('Head')).getWorldPosition(new Vector3()))).toBeLessThan(1e-6);
+    expect(h.rings.getWorldPosition(new Vector3()).distanceTo(
+      rig.getBoneAt(rig.boneIndex('Neck')).getWorldPosition(new Vector3()))).toBeLessThan(1e-6);
+    // 点标记球 = 选中（标记不可拖）
+    dom.fire('pointerdown', clientFor(camera, h.marker.getWorldPosition(new Vector3())));
+    expect(h.marker.isDragging).toBe(false);
+    expect(ctl.getSelected()).toBe('neckC');
+    dom.fire('pointerup', {});
+    ctl.dispose();
+  });
 });

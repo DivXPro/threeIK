@@ -64,8 +64,9 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           // 直接掰骨（rotate 模式显示）：胸口拧上半身/侧倾、左右肩端肩耸肩。
           // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧），肩膀环在手臂 TwoBone 之前（送肩后手球仍钉住）
           { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.28 },
-          { kind: 'bone', name: 'shoulderL', bone: 'mixamorigLeftShoulder', color: 0xffaa66 },
-          { kind: 'bone', name: 'shoulderR', bone: 'mixamorigRightShoulder', color: 0x66ddaa },
+          // 肩部掰的是锁骨（靠脖子根，和胸口/脖子标记挤在一起）；标记球挂到大臂骨根部（肩膀头）分流
+          { kind: 'bone', name: 'shoulderL', bone: 'mixamorigLeftShoulder', markerBone: 'mixamorigLeftArm', color: 0xffaa66 },
+          { kind: 'bone', name: 'shoulderR', bone: 'mixamorigRightShoulder', markerBone: 'mixamorigRightArm', color: 0x66ddaa },
           // 脖子环声明在头部注视之前（同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
           { kind: 'bone', name: 'neck', bone: 'mixamorigNeck', color: 0xdddd99 },
           {

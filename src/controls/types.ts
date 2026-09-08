@@ -54,8 +54,8 @@ export interface ControlBuildContext {
   bone(name: string): Bone;
   /** 选中机制（Maya 同款：只有选中的控制点显示操纵器）：kind 把每个操纵器的 onPress 挂到这里 */
   select(name: string): void;
-  /** 只认领按下、不改选中（空白失焦判定用）：pole 等「常驻纯位置操纵器」的 onPress 挂这里——
-   *  点它不该把所属控制点（如手）的操纵器点亮，那会让用户误以为选中了手 */
+  /** 只认领按下、不改选中（空白失焦判定用）：「不该点亮任何控制点」的常驻操纵器 onPress 挂这里——
+   *  点它若选中某个控制点，会让用户误以为选中了它（内置 kind 已无用例，保留给自定义 kind） */
   claim(): void;
 }
 
@@ -70,6 +70,9 @@ export interface BuiltControl {
   readonly targets: DragTarget[];
   /** 旋转环（双通道控制点；装配器按操纵器模式切换 球↔环 的显示与交互） */
   readonly rotateRings?: RotateRings[];
+  /** 子选中环组（如 limb 的肘/膝环）：与主 rotateRings 互斥——选中 `${name}:${key}` 时该组上场、
+   *  主环收起；选中主名（name）时反之。让肘/膝成为独立选中目标：点 pole 球 = 选中肘部 */
+  readonly subRingGroups?: { key: string; rings: RotateRings[] }[];
   /** 参与 move 模式切换的球（缺省 = targets） */
   readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */

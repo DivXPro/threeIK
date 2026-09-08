@@ -147,7 +147,7 @@ export class SkeletonControls {
     for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
     c.dispose();
     this.controls.delete(name);
-    if (this.selectedName === name) this.selectedName = null;
+    if (this.selectedName === name || this.selectedName?.startsWith(name + ':')) this.selectedName = null;
   }
 
   /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 → 操纵器屏幕恒定大小 */
@@ -184,9 +184,18 @@ export class SkeletonControls {
   }
 
   /** 选中控制点（Maya 同款：只有选中的显示操纵器——move 模式显轴箭头、rotate 模式显旋转环）；
-   *  传 null 取消选中。操纵器的 onPress 会自动调它（点哪个选中哪个） */
+   *  传 null 取消选中。操纵器的 onPress 会自动调它（点哪个选中哪个）。
+   *  支持子选中（`'name:sub'`）：limb 的肘/膝是独立选中目标（点 pole 球选中它），
+   *  子选中时该子环组上场、主环收起，互不干扰 */
   select(name: string | null): void {
-    if (name !== null && !this.controls.has(name)) return;
+    if (name !== null) {
+      const sep = name.indexOf(':');
+      const main = sep < 0 ? name : name.slice(0, sep);
+      const sub = sep < 0 ? null : name.slice(sep + 1);
+      const c = this.controls.get(main);
+      if (!c) return;
+      if (sub !== null && !c.subRingGroups?.some((g) => g.key === sub)) return;
+    }
     if (this.selectedName === name) return;
     this.selectedName = name;
     for (const c of this.controls.values()) this.applyView(c);
@@ -196,11 +205,15 @@ export class SkeletonControls {
     return this.selectedName;
   }
 
-  /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示） */
+  /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）；
+   *  子环组（肘/膝）跟随子选中（`name:sub`），与主环互斥 */
   private applyView(c: BuiltControl): void {
     const move = this.manipulatorMode === 'move';
     const selected = this.selectedName === c.name;
-    const hasRings = !!c.rotateRings?.length;
+    const subSelected = this.selectedName?.startsWith(c.name + ':')
+      ? this.selectedName.slice(c.name.length + 1)
+      : null;
+    const hasRings = !!c.rotateRings?.length || !!c.subRingGroups?.length;
     for (const t of c.moveTargets ?? c.targets) {
       t.setVisible(true);
       t.setInteractive(true);
@@ -213,7 +226,14 @@ export class SkeletonControls {
       r.setInteractive(show);
       r.setVisible(show);
     }
-    c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球↔肘环）换班
+    for (const g of c.subRingGroups ?? []) {
+      const show = !move && subSelected === g.key; // 子环组：rotate 模式 + 子选中
+      for (const r of g.rings) {
+        r.setInteractive(show);
+        r.setVisible(show);
+      }
+    }
+    c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球换班）
   }
 
   private buildControl(spec: ControlPointSpec): BuiltControl {

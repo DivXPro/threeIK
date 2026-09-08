@@ -247,20 +247,20 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(true);
     dom.fire('pointerup', {});
-    expect(ctl.getSelected()).toBe(null); // 点 pole 只认领不选中
+    expect(ctl.getSelected()).toBe('leg:elbow'); // 点 pole 球 = 选中肘部子目标
 
-    // rotate + 未选中：pole 球收起不可拖，肘环也不上场（旋转操纵器只显示聚焦控制点的）
+    // rotate：pole 球收起；肘部已选中 → 肘环上场（端骨环不上——两个选中目标互斥）
     ctl.setManipulatorMode('rotate');
     expect(legH.pole.visible).toBe(false);
-    expect(legH.elbowRings.visible).toBe(false);
+    expect(legH.elbowRings.visible).toBe(true);
     expect(legH.rings!.visible).toBe(false);
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(false);
     dom.fire('pointerup', {});
 
-    // 选中后：肘环与端骨环一起上场
+    // 换选主控制点：端骨环上场、肘环收起
     ctl.select('leg');
-    expect(legH.elbowRings.visible).toBe(true);
+    expect(legH.elbowRings.visible).toBe(false);
     expect(legH.rings!.visible).toBe(true);
     // 失焦：全部收起
     ctl.select(null);
@@ -288,7 +288,7 @@ describe('createSkeletonControls', () => {
     const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
     converge();
     ctl.setManipulatorMode('rotate');
-    ctl.select('leg'); // 旋转操纵器只在选中后上场
+    ctl.select('leg:elbow'); // 肘环是独立选中目标：选中肘部才上场
 
     const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
     const knee0 = knee(); // 留弯姿势：(0.1, 0.616, -0.112) 附近
@@ -327,7 +327,7 @@ describe('createSkeletonControls', () => {
     const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
     converge();
     ctl.setManipulatorMode('rotate');
-    ctl.select('leg'); // 旋转操纵器只在选中后上场
+    ctl.select('leg:elbow'); // 肘环是独立选中目标：选中肘部才上场
 
     const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
     const knee0 = knee();
@@ -366,7 +366,7 @@ describe('createSkeletonControls', () => {
     const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
     converge();
     ctl.setManipulatorMode('rotate');
-    ctl.select('leg');
+    ctl.select('leg:elbow');
 
     const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
     const foot = () => rig.getBoneAt(rig.boneIndex('FootL')).getWorldPosition(new Vector3());
@@ -533,20 +533,23 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
 
-    // rotate：双通道控制点的球退化成可点标记（不藏、不可拖）；端骨环与肘环都走选中体系；
-    // pole 球收起（上面 move 模式拖球已选中 leg，故 leg 的环直接在场）
+    // rotate：双通道控制点的球退化成可点标记（不藏、不可拖）；端骨环走主选中、肘环走子选中；
+    // pole 球收起（上面 move 模式最后拖的是 pole 球，选中 = 'leg:elbow'，故肘环在场、端骨环不上）
     ctl.setManipulatorMode('rotate');
     expect(hipsH.rings!.visible).toBe(false); // 未选中：环不上场
     expect(legH.target.ball.visible).toBe(true); // 球变标记，不藏
     expect(legH.pole.visible).toBe(false);
-    expect(legH.elbowRings.visible).toBe(true); // leg 已选中：肘环在场
-    // 标记点击 = 选中，不进入拖拽；选中后该控制点的环上场
+    expect(legH.elbowRings.visible).toBe(true); // 肘部已选中：肘环在场
+    expect(legH.rings!.visible).toBe(false); // 端骨环走主选中：选肘部不上场
+    // 标记点击 = 选中，不进入拖拽
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
     expect(legH.target.isDragging).toBe(false);
     expect(ctl.getSelected()).toBe('leg');
-    expect(legH.rings!.visible).toBe(true);
-    expect(legH.elbowRings.visible).toBe(true);
     dom.fire('pointerup', {});
+    // 换选肘部子目标：肘环上场、端骨环收起
+    ctl.select('leg:elbow');
+    expect(legH.elbowRings.visible).toBe(true);
+    expect(legH.rings!.visible).toBe(false);
     // 换选别的控制点：旧环收起、新环上场
     ctl.select('hips');
     expect(legH.rings!.visible).toBe(false);
@@ -561,7 +564,7 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(false);
     dom.fire('pointerup', {});
-    ctl.select('leg'); // 肘环走选中体系：上面已换选 hips，拖前选中回来
+    ctl.select('leg:elbow'); // 肘环走子选中体系：上面已换选 hips，拖前选中肘部
     const kneePos = rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
     dom.fire('pointerdown', clientFor(camera, kneePos.clone().add(new Vector3(0, ringR(legH.elbowRings), 0))));
     expect(legH.elbowRings.isDragging).toBe(true);
@@ -614,21 +617,21 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe(null);
 
-    // pole 是常驻纯位置操纵器：点它只认领按下（不失焦），但不选中/不点亮所属控制点
+    // pole 球 = 肘部的操纵器：点它选中肘部子目标（不失焦），但不点亮手臂本体的操纵器
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
     dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe('leg');
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
-    expect(ctl.getSelected()).toBe('leg'); // 已选中的不被 pole 点击反取消
+    expect(ctl.getSelected()).toBe('leg:elbow'); // 点 pole 球 = 选中肘部
     expect(legH.pole.isDragging).toBe(true);
     dom.fire('pointerup', {});
 
-    // 未选中状态点 pole：不选中该 limb（防误导），pole 本身照常可拖
+    // 未选中状态点 pole：选中肘部子目标，pole 本身照常可拖
     dom.fire('pointerdown', blank);
     dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe(null);
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
-    expect(ctl.getSelected()).toBe(null); // 点肘球不选中手
+    expect(ctl.getSelected()).toBe('leg:elbow'); // 点肘球选中肘部（不影响手臂本体）
     expect(legH.pole.isDragging).toBe(true); // pole 本身照常可拖
     dom.fire('pointerup', {});
 

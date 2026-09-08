@@ -48,9 +48,9 @@ export interface LimbControlHandle extends ControlHandleBase {
   readonly modifier: TwoBoneIkModifier;
   /** pole 双通道影子球（W 模式操纵器：角度=肘/膝朝向、径向=弯度；E 模式收起、换肘环上场） */
   readonly pole: PoleOrbit;
-  /** 肘/膝二维旋转环（E 模式 + 选中时上场：X 环 = 前臂/小腿绕自身纵轴扭转（位置全不动，
-   *  只有朝向滚——上臂/大腿的旋转归肩部控制点，不在肘/膝上做）；Y 环 = 绕弯折轴伸缩，
-   *  纯肘/膝关节 FK，手/脚绕关节画弧、关节钉住不动） */
+  /** 肘/膝二维旋转环（E 模式 + 子选中 `${name}:elbow` 时上场——点 pole 球或肘环选中肘部：
+   *  X 环 = 前臂/小腿绕自身纵轴扭转（位置全不动，只有朝向滚——上臂/大腿的旋转归肩部控制点，
+   *  不在肘/膝上做）；Y 环 = 绕弯折轴伸缩，纯肘/膝关节 FK，手/脚绕关节画弧、关节钉住不动） */
   readonly elbowRings: RotateRings;
   /** 扭转通道的滚转 modifier（TwoBone 求解后对中骨施加附加滚转） */
   readonly rollModifier: RollModifier;
@@ -77,10 +77,10 @@ const _elbow0 = new Vector3();
 const _fore0 = new Vector3();
 
 /** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制，拖它 = IK，弯度由它离根的远近决定——Maya 同款语义）
- *  + 肘/膝操纵器（W/E 换班）——
+ *  + 肘/膝操纵器（W/E 换班，独立选中目标 `${name}:elbow`——点 pole 球或肘环选中肘部）——
  *   W 模式 = pole 双通道影子球（球贴在肘/膝的 ⊥ 链轴影子处：绕轴转 = 调朝向，外拽/内推 = 调弯度，
  *   手钉在原地或沿链轴滑动——「手定肘动」语义，上臂/大腿的旋转也经此（pole vector）实现）；
- *   E 模式 = 肘/膝二维旋转环（选中时上场）：红环 = 前臂/小腿绕自身纵轴扭转（位置全不动），
+ *   E 模式 = 肘/膝二维旋转环（选中肘部时上场）：红环 = 前臂/小腿绕自身纵轴扭转（位置全不动），
  *   绿环 = 绕弯折轴伸缩（手/脚绕关节画弧、关节钉住不动——纯关节 FK）。
  *  内置 roll 修正实测（A）。 */
 export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec): BuiltControl {
@@ -100,9 +100,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     dragControl: ctx.dragControl,
   });
   pole.bind(rootObj, target); // 链轴 = 根骨→端球（端球被可达钳制收拢过，与实际链一致）
-  // pole/肘环是常驻操纵器（不参与选中体系）：点它只认领按下（防空白失焦），
-  // 不选中所属 limb——否则点肘部操纵器会把手的轴箭头点亮，误导用户以为选中了手
-  pole.onPress = () => ctx.claim();
+  // pole 球/肘环 = 肘/膝自己的操纵器：点按 = 选中肘部子目标（`${name}:elbow`）——
+  // W 模式选不选中它都在场（纯位置轨道球），E 模式选中后肘环上场、手臂本体的环不受影响
+  pole.onPress = () => ctx.select(`${spec.name}:elbow`);
   ctx.scene.add(pole);
 
   // 肘/膝二维旋转环（E 模式 + 选中时上场，与端骨环同走 rotateRings 选中体系）：
@@ -122,7 +122,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   // 拖拽快照（pointerdown 时捕获）：累计角 × 拖前前臂 = 累计旋转——同一帧连发多个 move、
   // 求解器还没跑（骨骼位置未更新）时，逐事件读骨骼会丢旋转，快照×累计角恒正确
   elbowRings.onPress = () => {
-    ctx.claim();
+    ctx.select(`${spec.name}:elbow`); // 与 pole 球同一个选中目标：点肘环 = 选中肘部
     rollBase = rollAngle;
     midObj.getWorldPosition(_elbow0);
     endObj.getWorldPosition(_fore0).sub(_elbow0);
@@ -258,10 +258,11 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   return {
     name: spec.name, kind: 'limb',
     targets: [target],
-    // 端球参与 move 模式切换；肘环与端骨环同走 rotateRings 选中体系（E 模式 + 选中才上场）；
+    // 端球参与 move 模式切换；端骨环走主选中体系，肘环走子选中（`${name}:elbow`，与主环互斥）；
     // pole 球只归 W（onModeChange 切显隐）
     moveTargets: [target],
-    rotateRings: rings ? [elbowRings, rings] : [elbowRings],
+    rotateRings: rings ? [rings] : [],
+    subRingGroups: [{ key: 'elbow', rings: [elbowRings] }],
     modifiers,
     onModeChange(mode) {
       pole.visible = mode === 'move';

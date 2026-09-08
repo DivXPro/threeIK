@@ -1,4 +1,4 @@
-import { Camera, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, TorusGeometry, Vector2, Vector3 } from 'three';
+import { Camera, Color, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, TorusGeometry, Vector2, Vector3 } from 'three';
 import { MANIPULATOR_REF_DIST, type DragControl, type DragDom, type DragPointerEvent } from './drag-target';
 
 // 与 DragTarget 同款命中容差：按相机距离换算的世界容差，让细环在屏幕上可点
@@ -7,6 +7,32 @@ const HIT_TOLERANCE_PER_METER = 0.011;
 // 单位环几何共享（mesh.scale 放到实际半径；管粗随之等比）：torus 默认躺在 XY 平面，轴为 +Z
 const RING_TUBE = 0.02; // 管粗（相对环半径）：细线风格，命中容差同步吃这个值
 const _unitTorus = new TorusGeometry(1, RING_TUBE, 10, 64);
+
+/** 背向屏幕的半环混入的灰色（保留 20% 本色：红环后半偏粉灰、高亮后半偏暖灰） */
+const BACK_HALF_COLOR = 0x808080;
+
+/**
+ * 后半环染灰的 shader 补丁（onBeforeCompile，MeshBasicMaterial 标准扩展点）：
+ * 比环心离相机更远的片段 = 背向屏幕的一半，混成灰调——深度线索（Maya/Blender 操纵器同款），
+ * 分界线恒为「过环心 ⊥ 视线」的平面，相机转动自动跟随（uCenterViewZ 每帧由 update 刷新）。
+ * 模块级函数：所有环材质的 onBeforeCompile 源码相同 → 共享同一个编译产物（program cache key 一致）
+ */
+function patchBackHalfGray(mat: MeshBasicMaterial, uniforms: { uCenterViewZ: { value: number }; uBackColor: { value: Color } }): void {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uCenterViewZ = uniforms.uCenterViewZ;
+    shader.uniforms.uBackColor = uniforms.uBackColor;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vViewZ;')
+      // project_vertex 之后 mvPosition = 视图空间位置；相机朝 -Z 看，-z 即离相机距离
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvViewZ = -mvPosition.z;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vViewZ;\nuniform float uCenterViewZ;\nuniform vec3 uBackColor;')
+      // color_fragment 之后 diffuseColor = 材质本色；越过环心深度 → 灰调（留 20% 本色）
+      .replace('#include <color_fragment>', `#include <color_fragment>
+	float backHalf = smoothstep(uCenterViewZ - 0.002, uCenterViewZ + 0.002, vViewZ);
+	diffuseColor.rgb = mix(diffuseColor.rgb, mix(uBackColor, diffuseColor.rgb, 0.2), backHalf);`);
+  };
+}
 
 const AXES = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
 const AXIS_COLORS = [0xff5544, 0x44dd66, 0x4488ff]; // X 红 / Y 绿 / Z 蓝
@@ -76,6 +102,11 @@ export class RotateRings extends Object3D {
   private readonly meshes: Mesh[] = [];
   private readonly viewMesh: Mesh | null = null;
   private readonly materials: MeshBasicMaterial[] = [];
+  /** 后半环染灰的共享 uniform（uCenterViewZ 每帧 update 刷新 = 环心离相机距离；调/测可读） */
+  readonly depthUniforms: { uCenterViewZ: { value: number }; uBackColor: { value: Color } } = {
+    uCenterViewZ: { value: 0 },
+    uBackColor: { value: new Color(BACK_HALF_COLOR) },
+  };
   /** 槽位 → 轴序号（0-2）：启用的轴环子集；视角环槽 = ringAxisIndices.length（无视角环则 -1） */
   private readonly ringAxisIndices: number[];
   private readonly viewSlot: number = -1;
@@ -105,6 +136,7 @@ export class RotateRings extends Object3D {
 
     for (const axisIndex of this.ringAxisIndices) {
       const mat = new MeshBasicMaterial({ color: AXIS_COLORS[axisIndex], depthTest: false, transparent: true, opacity: 0.9 });
+      patchBackHalfGray(mat, this.depthUniforms);
       const mesh = new Mesh(_unitTorus, mat);
       // 环平面 ⊥ 轴向：torus 轴 +Z 旋到 AXES[axisIndex]
       if (axisIndex === 0) mesh.rotation.y = Math.PI / 2;       // +Z → +X
@@ -117,6 +149,7 @@ export class RotateRings extends Object3D {
     }
     if (options.viewRing ?? true) {
       const viewMat = new MeshBasicMaterial({ color: VIEW_COLOR, depthTest: false, transparent: true, opacity: 0.6 });
+      patchBackHalfGray(viewMat, this.depthUniforms);
       this.viewMesh = new Mesh(_unitTorus, viewMat);
       this.viewMesh.scale.setScalar(this.ringRadius * VIEW_RING_SCALE);
       this.viewMesh.renderOrder = 998;
@@ -252,6 +285,10 @@ export class RotateRings extends Object3D {
     }
     this.getWorldPosition(_c);
     this.scale.setScalar(this.camera.position.distanceTo(_c) / MANIPULATOR_REF_DIST);
+    // 后半环染灰的分界深度 = 环心离相机距离（视图空间 -z）；可能滞后一帧（相机本帧的移动
+    // 在渲染时才写 matrixWorldInverse），视觉上不可感知
+    _p.copy(_c).applyMatrix4(this.camera.matrixWorldInverse);
+    this.depthUniforms.uCenterViewZ.value = -_p.z;
     // 视角环面向相机：local = thisWorld⁻¹ × cameraWorld
     if (this.viewMesh) {
       this.getWorldQuaternion(_q).invert();

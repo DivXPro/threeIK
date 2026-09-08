@@ -138,4 +138,24 @@ describe('RotateRings', () => {
     dom.fire('pointerdown', clientFor(camera, new Vector3(0, rr, 0)));
     expect(rings.isDragging).toBe(false);
   });
+
+  it('后半环染灰：uCenterViewZ 每帧刷新为环心的视图深度（分界平面 = 过环心 ⊥ 视线）', () => {
+    const cam = makeCamera(0.5, 1, 4, 0, 0, 0);
+    const { joint, rings } = makeRings(new Vector3(0.3, 0.2, 0), cam);
+    const expectDepth = () => {
+      const c = joint.getWorldPosition(new Vector3()).applyMatrix4(cam.matrixWorldInverse);
+      return -c.z; // 视图空间相机朝 -Z 看：-z 即离相机距离
+    };
+    expect(rings.depthUniforms.uCenterViewZ.value).toBeCloseTo(expectDepth(), 6);
+    // 关节挪动后再 update：分界深度跟随环心
+    joint.position.set(-0.5, 0.4, 1.2);
+    joint.updateMatrixWorld(true);
+    rings.update();
+    expect(rings.depthUniforms.uCenterViewZ.value).toBeCloseTo(expectDepth(), 6);
+    // 相机挪动后再 update：同样跟随
+    cam.position.set(0, 0, 2);
+    cam.updateMatrixWorld(true);
+    rings.update();
+    expect(rings.depthUniforms.uCenterViewZ.value).toBeCloseTo(expectDepth(), 6);
+  });
 });

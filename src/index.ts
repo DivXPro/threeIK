@@ -18,6 +18,8 @@ export { AimModifier } from './modifiers/constraints/aim';
 export type { AimConfig, BoneConstraintConfig } from './modifiers/constraints/aim';
 export { CopyTransformModifier } from './modifiers/constraints/copy-transform';
 export type { CopyTransformConfig } from './modifiers/constraints/copy-transform';
+export { RollModifier } from './modifiers/constraints/roll';
+export type { RollConfig } from './modifiers/constraints/roll';
 
 export { RootMotionModifier } from './modifiers/root-motion';
 

@@ -2,6 +2,7 @@ import { Matrix4, Quaternion, Vector3 } from 'three';
 import { ThreeIKError } from '../../core/errors';
 import { TwoBoneIkModifier } from '../../modifiers/ik/two-bone-ik';
 import { CopyTransformModifier } from '../../modifiers/constraints/copy-transform';
+import { RollModifier } from '../../modifiers/constraints/roll';
 import { DragTarget } from '../drag-target';
 import { PoleOrbit } from '../pole-orbit';
 import { RotateRings } from '../rotate-rings';
@@ -47,9 +48,12 @@ export interface LimbControlHandle extends ControlHandleBase {
   readonly modifier: TwoBoneIkModifier;
   /** pole 双通道影子球（W 模式操纵器：角度=肘/膝朝向、径向=弯度；E 模式收起、换肘环上场） */
   readonly pole: PoleOrbit;
-  /** 肘/膝二维旋转环（E 模式操纵器：X 环 = 绕上臂轴 swivel，Y 环 = 绕弯折轴伸缩；
-   *  纯肘关节 FK——转前臂、肘/肩钉住不动） */
+  /** 肘/膝二维旋转环（E 模式 + 选中时上场：X 环 = 前臂/小腿绕自身纵轴扭转（位置全不动，
+   *  只有朝向滚——上臂/大腿的旋转归肩部控制点，不在肘/膝上做）；Y 环 = 绕弯折轴伸缩，
+   *  纯肘/膝关节 FK，手/脚绕关节画弧、关节钉住不动） */
   readonly elbowRings: RotateRings;
+  /** 扭转通道的滚转 modifier（TwoBone 求解后对中骨施加附加滚转） */
+  readonly rollModifier: RollModifier;
   /** 端骨旋转环（spec.endRotation: true 时存在） */
   readonly rings?: RotateRings;
   /** 实测链可达半径（米，世界空间，未经 keepAlive 收缩） */
@@ -66,6 +70,8 @@ const _polePos = new Vector3();
 const _axis = new Vector3();
 const _midQ = new Quaternion();
 const _m = new Matrix4();
+const _v1 = new Vector3();
+const _v2 = new Vector3();
 // 肘环拖拽快照（pointerdown 捕获，拖拽全程有效）：拖前肘位置与前臂向量
 const _elbow0 = new Vector3();
 const _fore0 = new Vector3();
@@ -73,9 +79,9 @@ const _fore0 = new Vector3();
 /** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制，拖它 = IK，弯度由它离根的远近决定——Maya 同款语义）
  *  + 肘/膝操纵器（W/E 换班）——
  *   W 模式 = pole 双通道影子球（球贴在肘/膝的 ⊥ 链轴影子处：绕轴转 = 调朝向，外拽/内推 = 调弯度，
- *   手钉在原地或沿链轴滑动——「手定肘动」语义）；
- *   E 模式 = 肘部二维旋转环（X 环绕上臂轴 = 前臂 swivel，Y 环绕弯折轴 = 伸缩，纯肘关节 FK，
- *   手绕肘画弧——「肘定手动」语义，与端球 IK 复核天然一致）。
+ *   手钉在原地或沿链轴滑动——「手定肘动」语义，上臂/大腿的旋转也经此（pole vector）实现）；
+ *   E 模式 = 肘/膝二维旋转环（选中时上场）：红环 = 前臂/小腿绕自身纵轴扭转（位置全不动），
+ *   绿环 = 绕弯折轴伸缩（手/脚绕关节画弧、关节钉住不动——纯关节 FK）。
  *  内置 roll 修正实测（A）。 */
 export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec): BuiltControl {
   const rootObj = ctx.bone(spec.rootBone);
@@ -99,9 +105,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   pole.onPress = () => ctx.claim();
   ctx.scene.add(pole);
 
-  // 肘部二维旋转环（E 模式操纵器，与 pole 球 W/E 换班）：X 环 = 绕上臂轴 swivel（前臂绕轴滚），
-  // Y 环 = 绕弯折轴 bend（前臂在弯折面内收/展 = 伸缩）。增量模式：拖环不改写环自身朝向，
-  // 逐事件把角度增量交给下面的 onRotateDelta（转前臂、移动端球）
+  // 肘/膝二维旋转环（E 模式 + 选中时上场，与端骨环同走 rotateRings 选中体系）：
+  // X 环 = 前臂/小腿绕自身纵轴扭转（RollModifier 施加，位置全不动），Y 环 = 绕弯折轴伸缩
+  // （增量模式：拖环不改写环自身朝向，累计角交给下面的 onRotateDrag）
   const elbowRings = new RotateRings(ctx.camera, ctx.dom, {
     ringRadius: spec.pole?.ringRadius ?? ctx.defaults.ringRadius,
     dragControl: ctx.dragControl,
@@ -109,10 +115,15 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     viewRing: false,
   });
   elbowRings.setJoint(midObj);
+  // 扭转通道的滚转落点（RollModifier 实例在下方 modifiers 数组声明后注册）：
+  // TwoBone 把中骨朝向整体重写，附加滚转必须求解后重新施加
+  let rollAngle = 0; // 持久扭转角（控制层持有，每帧由 rollModifier 重放）
+  let rollBase = 0;  // 本次拖拽起始角（onPress 捕获，拖环 = rollBase + 累计角）
   // 拖拽快照（pointerdown 时捕获）：累计角 × 拖前前臂 = 累计旋转——同一帧连发多个 move、
   // 求解器还没跑（骨骼位置未更新）时，逐事件读骨骼会丢旋转，快照×累计角恒正确
   elbowRings.onPress = () => {
     ctx.claim();
+    rollBase = rollAngle;
     midObj.getWorldPosition(_elbow0);
     endObj.getWorldPosition(_fore0).sub(_elbow0);
   };
@@ -126,6 +137,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   // 端骨旋转通道（endRotation）：旋转环驱动端骨朝向；CopyTransform 只拷旋转、不碰位置（位置仍归端球/链 IK）
   let rings: RotateRings | undefined;
   const modifiers: BuiltControl['modifiers'] = [{ modifier, rootBone: spec.rootBone }];
+  // 扭转滚转：排序锚骨 = 中骨——TwoBone(根) 之后、端骨定向(端) 之前执行
+  const rollModifier = new RollModifier([{ applyBone: spec.middleBone, childBone: spec.endBone }]);
+  modifiers.push({ modifier: rollModifier, rootBone: spec.middleBone });
   if (spec.endRotation) {
     rings = new RotateRings(ctx.camera, ctx.dom, { ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius, dragControl: ctx.dragControl });
     rings.setJoint(endObj);
@@ -175,41 +189,51 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     target.moveTo(_endPos.copy(_rootPos).addScaledVector(_axis, D));
   };
 
-  // 肘环坐标架（非拖拽时每帧重算）：X = 上臂轴（肩→肘，swivel 环），Y = 弯折轴（上臂轴 × 肘离轴
-  // 方向，bend 环），Z = X×Y。肘离轴方向相对「链轴（根→端球）」取——弯时取实测、直时取 pole 球
-  // 携带的偏好方向（影子球恒有 2cm 偏移，方向恒非零）：伸直手臂上 bend 环依旧定义良好，
-  // 掰的方向 = pole 指向。（注意：肘恒在上臂轴上，相对上臂轴的离轴分量恒为 0，别用错轴）
+  // 肘环坐标架（非拖拽时每帧重算）：X = 前臂/小腿轴（肘→腕，twist 环——绕它滚 = 扭转，位置不动），
+  // Y = 弯折轴（上臂轴 × 肘离链轴方向，bend 环——绕它转 = 伸缩），Z = X×Y。肘离链轴方向弯时取
+  // 实测、直时取 pole 球携带的偏好方向（影子球恒有 2cm 偏移，方向恒非零）：伸直手臂上 bend 环
+  // 依旧定义良好，掰的方向 = pole 指向（注意：肘恒在上臂轴上，相对上臂轴的离轴分量恒为 0，别用错轴）
   elbowRings.orientationSource = (out) => {
     rootObj.getWorldPosition(_rootPos);
     midObj.getWorldPosition(_midPos);
-    target.getWorldPosition(_endPos);
-    _axis.copy(_midPos).sub(_rootPos); // X = 上臂轴
+    endObj.getWorldPosition(_endPos);
+    target.getWorldPosition(_polePos);
+    _axis.copy(_midPos).sub(_rootPos); // 上臂轴（弯折轴计算用）
     if (_axis.lengthSq() < 1e-12) return;
     _axis.normalize();
-    _polePos.copy(_endPos).sub(_rootPos); // 链轴（根→端球）
+    _polePos.sub(_rootPos); // 链轴（根→端球）
     if (_polePos.lengthSq() < 1e-12) return;
     _polePos.normalize();
-    _endPos.copy(_midPos).sub(_rootPos); // 弯时：肘实测离链轴方向
-    _endPos.addScaledVector(_polePos, -_endPos.dot(_polePos));
-    if (_endPos.lengthSq() < 1e-8) {
-      pole.ball.getWorldPosition(_endPos).sub(_rootPos); // 直时：pole 偏好方向
-      _endPos.addScaledVector(_polePos, -_endPos.dot(_polePos));
-      if (_endPos.lengthSq() < 1e-10) return;
+    _v1.copy(_midPos).sub(_rootPos); // 弯时：肘实测离链轴方向
+    _v1.addScaledVector(_polePos, -_v1.dot(_polePos));
+    if (_v1.lengthSq() < 1e-8) {
+      pole.ball.getWorldPosition(_v1).sub(_rootPos); // 直时：pole 偏好方向
+      _v1.addScaledVector(_polePos, -_v1.dot(_polePos));
+      if (_v1.lengthSq() < 1e-10) return;
     }
-    _endPos.normalize();
-    _midPos.crossVectors(_axis, _endPos).normalize(); // Y = 弯折轴
-    _polePos.crossVectors(_axis, _midPos);            // Z = X×Y
-    out.setFromRotationMatrix(_m.makeBasis(_axis, _midPos, _polePos));
+    _v1.normalize();
+    _v2.crossVectors(_axis, _v1).normalize(); // Y = 弯折轴（⊥ 弯折面）
+    _midPos.subVectors(_endPos, _midPos);     // X = 前臂/小腿轴（肘→腕/踝）
+    if (_midPos.lengthSq() < 1e-12) return;
+    _midPos.normalize();
+    _polePos.crossVectors(_midPos, _v2);      // Z = X×Y
+    out.setFromRotationMatrix(_m.makeBasis(_midPos, _v2, _polePos));
   };
 
-  // 肘环增量通道（axisIndex：0 = swivel 绕上臂轴，1 = bend 绕弯折轴；angle = 按下以来的累计角，
-  // axisWorld = 过肘的冻结拖轴）：拖前前臂（onPress 快照）绕拖轴转 angle，端球搬到弧上的新位置——
-  // 纯肘关节 FK，肘/上臂/肩全程不动，旋转保距（新链距恒 ≤ len1+len2）下一帧 TwoBone 复核自然可达。
-  // pole 方向随后按真相重同步：弯时贴肘真实离轴方向（肘没动，求解器把它留在原地，防残差漂移）；
-  // 直时肘离轴退化，swivel 把偏好方向随环绕链轴转（保持「往哪边掰」的选择）
+  // 肘环增量通道（axisIndex：0 = twist 绕前臂轴，1 = bend 绕弯折轴；angle = 按下以来的累计角，
+  // axisWorld = 过肘的冻结拖轴）——
+  //  twist：前臂/小腿绕自身纵轴滚转（RollModifier 重放持久角），手/脚位置、肘/膝、上臂/大腿全不动；
+  //  bend：拖前前臂（onPress 快照）绕弯折轴转 angle，端球搬到弧上的新位置——纯关节 FK，肘/肩
+  //  全程不动，旋转保距（新链距恒 ≤ len1+len2）下一帧 TwoBone 复核自然可达。pole 方向随后按
+  //  真相重同步：弯时贴肘真实离轴方向（肘没动，求解器把它留在原地，防残差漂移）
   elbowRings.onRotateDrag = (axisIndex, angle, axisWorld) => {
+    if (axisIndex === 0) {
+      rollAngle = rollBase + angle;
+      rollModifier.setAngle(0, rollAngle);
+      return;
+    }
     rootObj.getWorldPosition(_rootPos);
-    pole.ball.getWorldPosition(_polePos).sub(_rootPos); // 拖前的 pole 偏好方向（拖拽中球不动，伸直时也非零）
+    pole.ball.getWorldPosition(_polePos).sub(_rootPos); // 拖前的 pole 偏好方向（拖拽中球不动）
     _endPos.copy(_fore0).applyAxisAngle(axisWorld, angle); // 拖前前臂 × 累计角 = 累计旋转
     target.moveTo(_endPos.add(_elbow0));                   // 手 = 肘 + 新前臂
     target.getWorldPosition(_endPos);
@@ -220,16 +244,11 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     _midPos.addScaledVector(_axis, -_midPos.dot(_axis));
     if (_midPos.lengthSq() >= 1e-8) {
       pole.setDirection(_midPos);
-    } else if (axisIndex === 0) {
-      _polePos.addScaledVector(_axis, -_polePos.dot(_axis));
-      if (_polePos.lengthSq() >= 1e-10) {
-        pole.setDirection(_polePos.normalize().applyAxisAngle(_axis, angle));
-      }
     }
   };
 
   const handle: LimbControlHandle = {
-    name: spec.name, kind: 'limb', target, pole, elbowRings, modifier, rings,
+    name: spec.name, kind: 'limb', target, pole, elbowRings, rollModifier, modifier, rings,
     get reach() { return reach; },
     setActive: (a) => { modifier.active = a; },
     setReachScale: (s) => { reachScale = s; applyReach(); },
@@ -239,16 +258,13 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   return {
     name: spec.name, kind: 'limb',
     targets: [target],
-    // 端球参与 move 模式切换；端骨环（endRotation）走选中+rotate 模式体系；
-    // pole 球↔肘环是常驻操纵器，经 onModeChange 自行换班（W = 球、E = 环）
+    // 端球参与 move 模式切换；肘环与端骨环同走 rotateRings 选中体系（E 模式 + 选中才上场）；
+    // pole 球只归 W（onModeChange 切显隐）
     moveTargets: [target],
-    rotateRings: rings ? [rings] : undefined,
+    rotateRings: rings ? [elbowRings, rings] : [elbowRings],
     modifiers,
     onModeChange(mode) {
-      const move = mode === 'move';
-      pole.visible = move;
-      elbowRings.setVisible(!move);
-      elbowRings.setInteractive(!move);
+      pole.visible = mode === 'move';
     },
     postSolve() {
       const m = measureChain(rootObj, spec.rootBone, spec.endBone);

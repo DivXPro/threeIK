@@ -91,6 +91,7 @@ const _fore0 = new Vector3();
 const _sRoot0 = new Vector3();
 const _sElbow0 = new Vector3();
 const _sHand0 = new Vector3();
+const _sPole0 = new Vector3(); // 根环拖拽起点的 pole 偏好方向（弯=肘离轴，直=pole 球方向）
 const _q0 = new Quaternion();
 
 /** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制，拖它 = IK，弯度由它离根的远近决定——Maya 同款语义）
@@ -289,6 +290,19 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       rootObj.getWorldPosition(_sRoot0);
       midObj.getWorldPosition(_sElbow0);
       endObj.getWorldPosition(_sHand0);
+      // pole 偏好方向快照（⊥链轴）：弯 = 肘实测离轴方向，直 = pole 球方向——
+      // 直臂扭转（X 环）时肘/手都在轴上、刚体旋转是空操作，pole 旋转是唯一生效通道
+      target.getWorldPosition(_v1).sub(_sRoot0);
+      if (_v1.lengthSq() < 1e-12) { _sPole0.set(0, 0, 0); return; }
+      _v1.normalize(); // 链轴
+      _sPole0.copy(_sElbow0).sub(_sRoot0);
+      _sPole0.addScaledVector(_v1, -_sPole0.dot(_v1));
+      if (_sPole0.lengthSq() < 1e-8) {
+        pole.ball.getWorldPosition(_sPole0).sub(_sRoot0);
+        _sPole0.addScaledVector(_v1, -_sPole0.dot(_v1));
+      }
+      if (_sPole0.lengthSq() >= 1e-10) _sPole0.normalize();
+      else _sPole0.set(0, 0, 0);
     };
     ctx.scene.add(shoulderRings);
 
@@ -318,17 +332,20 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     };
 
     // 刚体旋转：肘 = 根 + q×(拖前肘−根)，手 = 根 + q×(拖前手−根)（q = 累计角绕冻结拖轴）——
-    // 两段骨长、弯度、链距全保；端球搬到 H'，pole 按 E' 去轴分量重定向
+    // 两段骨长、弯度、链距全保；端球搬到 H'，pole 偏好方向同转 q 后去轴重定向。
+    // （弯臂时 rot(pole0) 去轴 ≡ E' 去轴——旋转保点积；直臂时 E' 离轴分量为零、只有 pole
+    //  旋转生效：TwoBone 按 pole 方向让整链绕链轴滚 = 大臂/大腿扭转，肘/膝折痕转向）
     shoulderRings.onRotateDrag = (_axisIndex, angle, axisWorld) => {
       _q0.setFromAxisAngle(axisWorld, angle);
       _midPos.copy(_sElbow0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0); // E'
       _endPos.copy(_sHand0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0);   // H'
       target.moveTo(_endPos);
+      if (_sPole0.lengthSq() < 1e-10) return;
       rootObj.getWorldPosition(_rootPos);
       target.getWorldPosition(_axis).sub(_rootPos); // 新链轴
       if (_axis.lengthSq() < 1e-12) return;
       _axis.normalize();
-      _v1.copy(_midPos).sub(_rootPos); // E' 离链轴方向
+      _v1.copy(_sPole0).applyQuaternion(_q0); // pole 偏好同转
       _v1.addScaledVector(_axis, -_v1.dot(_axis));
       if (_v1.lengthSq() >= 1e-8) pole.setDirection(_v1);
     };

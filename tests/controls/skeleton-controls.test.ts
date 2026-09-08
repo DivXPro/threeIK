@@ -543,6 +543,69 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
+  it('根关节环·直链 twist：腿伸直时绕大腿轴拧 = 位置全不动、整链绕链轴滚（pole 通道接管）', () => {
+    const { rig } = buildRig();
+    // 俯视相机：直腿的扭转环在水平面（y=1），与眼高等高的相机会把它看成正侧线（射线与环面平行，命中退化）
+    const scene = new Scene();
+    scene.add(rig.getBoneAt(0).parent ?? rig.getBoneAt(0));
+    scene.updateMatrixWorld(true);
+    const camera = makeCamera(0, 2, 4, 0, 0.8, 0);
+    const dom = makeDomStub();
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        // keepAlive 1 = 完全伸直：髋→膝→脚全在大腿轴上，刚体旋转通道是空操作，
+        // twist 只能走 pole 方向旋转（链滚转 = 大腿扭转、膝折痕转向）
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 1, rootRotation: true },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+    ctl.setManipulatorMode('rotate');
+    ctl.select('leg:root');
+
+    const hip = () => rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const foot = () => rig.getBoneAt(rig.boneIndex('FootL')).getWorldPosition(new Vector3());
+    const hip0 = hip(); const knee0 = knee(); const foot0 = foot();
+    const thigh = rig.getBoneAt(rig.boneIndex('UpLegL'));
+    const q0 = thigh.getWorldQuaternion(new Quaternion()).normalize();
+    // pole 方向（球世界位置去链轴分量；直链时球绕链轴转的角度 = pole 方向转的角度）
+    const poleDirOf = () => {
+      const d = legH.pole.ball.getWorldPosition(new Vector3()).sub(hip());
+      const a = knee().sub(hip()).normalize();
+      return d.addScaledVector(a, -d.dot(a)).normalize();
+    };
+    const poleDir0 = poleDirOf();
+    // twist 环 ⊥ 大腿轴（此姿势 = -y）：环上 45° 点起拖到 +90° 点（避开环交点）
+    const thighAxis = knee0.clone().sub(hip0).normalize();
+    const r = ringR(legH.shoulderRings!);
+    const u1 = new Vector3().crossVectors(thighAxis, new Vector3(1, 0, 0)).normalize();
+    const u2 = new Vector3().crossVectors(thighAxis, u1);
+    const v0 = u1.clone().addScaledVector(u2, 0.5).normalize();
+    const v1 = new Vector3().crossVectors(thighAxis, v0);
+    dom.fire('pointerdown', clientFor(camera, hip0.clone().addScaledVector(v0, r)));
+    expect(legH.shoulderRings!.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, hip0.clone().addScaledVector(v1, r)));
+    dom.fire('pointerup', {});
+    converge();
+
+    // 三点位置全钉住（都在大腿轴上，刚体通道本就无位移）
+    expect(hip().distanceTo(hip0)).toBeLessThan(1e-3);
+    expect(knee().distanceTo(knee0)).toBeLessThan(1e-3);
+    expect(foot().distanceTo(foot0)).toBeLessThan(1e-3);
+    // pole 方向绕链轴转了 ~90°（控制层真相）
+    expect(poleDir0.angleTo(poleDirOf())).toBeGreaterThan(Math.PI / 2 - 0.1);
+    expect(poleDir0.angleTo(poleDirOf())).toBeLessThan(Math.PI / 2 + 0.1);
+    // 大腿骨真的滚了 ~90°（Float32 位姿存储有量级漂移，先归一化再比角）
+    const q1 = thigh.getWorldQuaternion(new Quaternion()).normalize();
+    expect(q0.angleTo(q1)).toBeGreaterThan(Math.PI / 2 - 0.1);
+    expect(q0.angleTo(q1)).toBeLessThan(Math.PI / 2 + 0.1);
+    ctl.dispose();
+  });
+
   it('pole 双通道·径向拖 = 弯度：外拽手收回膝弯出（朝向不变），推回轴心腿伸直', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);

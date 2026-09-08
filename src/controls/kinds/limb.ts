@@ -38,6 +38,11 @@ export interface LimbControlSpec extends ControlSpecBase {
   /** 端骨旋转通道（默认 false）：端骨关节挂一副旋转环驱动端骨朝向（①脚朝向/手腕翻向），
    *  随操纵器模式切换显示（rotate 模式下端球隐藏、换环上场） */
   endRotation?: boolean;
+  /** 根关节旋转通道（默认 false）：根骨关节（肩/髋）挂一副三维旋转环 + 常驻标记球（选中入口），
+   *  拖环 = 整臂/整腿绕根关节刚体旋转（大臂/大腿扭转+摆动，弯度不变、手/脚跟随），
+   *  端球与 pole 真相同步（与肘环 bend 同款 IK 同步，不和 TwoBone 打架）。
+   *  子选中 `${name}:root`——这是人体的肩/髋关节语义：动肩膀 = 掰大臂，不是转锁骨 */
+  rootRotation?: boolean;
   /** 旋转环半径（默认 defaults.ringRadius） */
   ringRadius?: number;
 }
@@ -57,6 +62,12 @@ export interface LimbControlHandle extends ControlHandleBase {
   readonly rollModifier: RollModifier;
   /** 端骨旋转环（spec.endRotation: true 时存在） */
   readonly rings?: RotateRings;
+  /** 根关节三维旋转环（spec.rootRotation: true 时存在；E 模式 + 子选中 `${name}:root` 上场）：
+   *  X 环 = 大臂/大腿绕自身纵轴扭转（肘/膝钉住，手/脚绕轴摆）；Y/Z 环 = 摆动（肘/膝绕根关节
+   *  画弧、弯度不变、手/脚跟随） */
+  readonly shoulderRings?: RotateRings;
+  /** 根关节标记球（常驻选中入口，不可拖；spec.rootRotation: true 时存在） */
+  readonly shoulderMarker?: DragTarget;
   /** 实测链可达半径（米，世界空间，未经 keepAlive 收缩） */
   readonly reach: number;
   setReachScale(scale: number): void;
@@ -76,6 +87,11 @@ const _v2 = new Vector3();
 // 肘环拖拽快照（pointerdown 捕获，拖拽全程有效）：拖前肘位置与前臂向量
 const _elbow0 = new Vector3();
 const _fore0 = new Vector3();
+// 根关节环拖拽快照（pointerdown 捕获）：拖前根/肘/手位置（刚体旋转的三点基准）
+const _sRoot0 = new Vector3();
+const _sElbow0 = new Vector3();
+const _sHand0 = new Vector3();
+const _q0 = new Quaternion();
 
 /** 四肢双骨链（TwoBoneIK）控制点：端球（可达钳制，拖它 = IK，弯度由它离根的远近决定——Maya 同款语义）
  *  + 肘/膝操纵器（W/E 换班，独立选中目标 `${name}:elbow`——点 pole 球或肘环选中肘部）——
@@ -250,8 +266,76 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     }
   };
 
+  // 根关节三维旋转环（spec.rootRotation）：人体肩/髋语义——整臂/整腿绕根关节刚体旋转
+  // （大臂/大腿扭转+摆动，弯度不变、手/脚跟随），与肘环 bend 同款真相同步：
+  // 拖前快照三点（根/肘/手）× 累计角 → 端球搬到 H'、pole 按 E' 重定向——
+  // 刚体旋转保两段骨长与链距，下一帧 TwoBone 解回的正是这个姿势（不和求解器打架）
+  let shoulderRings: RotateRings | undefined;
+  let shoulderMarker: DragTarget | undefined;
+  if (spec.rootRotation) {
+    shoulderMarker = new DragTarget(ctx.camera, ctx.dom, rootObj.getWorldPosition(new Vector3()), spec.color ?? 0xff5533, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
+    shoulderMarker.setMarkerMode(true); // 常驻标记：不可拖，点 = 选中根关节
+    shoulderMarker.onPress = () => ctx.select(`${spec.name}:root`);
+    ctx.scene.add(shoulderMarker);
+
+    shoulderRings = new RotateRings(ctx.camera, ctx.dom, {
+      ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius,
+      dragControl: ctx.dragControl,
+      viewRing: false,
+    });
+    shoulderRings.setJoint(rootObj);
+    shoulderRings.onPress = () => {
+      ctx.select(`${spec.name}:root`);
+      rootObj.getWorldPosition(_sRoot0);
+      midObj.getWorldPosition(_sElbow0);
+      endObj.getWorldPosition(_sHand0);
+    };
+    ctx.scene.add(shoulderRings);
+
+    // 根环坐标架（非拖拽时每帧重算）：X = 上臂/大腿轴（肩→肘，twist 环——绕它拧 = 肘钉住、
+    // 手绕轴摆），Y = 弯折轴（与肘环同款：上臂轴 × 肘离链轴方向，直时取 pole 偏好），Z = X×Y
+    shoulderRings.orientationSource = (out) => {
+      rootObj.getWorldPosition(_rootPos);
+      midObj.getWorldPosition(_midPos);
+      target.getWorldPosition(_polePos);
+      _axis.copy(_midPos).sub(_rootPos); // X = 上臂/大腿轴
+      if (_axis.lengthSq() < 1e-12) return;
+      _axis.normalize();
+      _polePos.sub(_rootPos); // 链轴（根→端球）
+      if (_polePos.lengthSq() < 1e-12) return;
+      _polePos.normalize();
+      _v1.copy(_midPos).sub(_rootPos); // 弯时：肘实测离链轴方向
+      _v1.addScaledVector(_polePos, -_v1.dot(_polePos));
+      if (_v1.lengthSq() < 1e-8) {
+        pole.ball.getWorldPosition(_v1).sub(_rootPos); // 直时：pole 偏好方向
+        _v1.addScaledVector(_polePos, -_v1.dot(_polePos));
+        if (_v1.lengthSq() < 1e-10) return;
+      }
+      _v1.normalize();
+      _v2.crossVectors(_axis, _v1).normalize(); // Y = 弯折轴
+      _polePos.crossVectors(_axis, _v2);        // Z = X×Y
+      out.setFromRotationMatrix(_m.makeBasis(_axis, _v2, _polePos));
+    };
+
+    // 刚体旋转：肘 = 根 + q×(拖前肘−根)，手 = 根 + q×(拖前手−根)（q = 累计角绕冻结拖轴）——
+    // 两段骨长、弯度、链距全保；端球搬到 H'，pole 按 E' 去轴分量重定向
+    shoulderRings.onRotateDrag = (_axisIndex, angle, axisWorld) => {
+      _q0.setFromAxisAngle(axisWorld, angle);
+      _midPos.copy(_sElbow0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0); // E'
+      _endPos.copy(_sHand0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0);   // H'
+      target.moveTo(_endPos);
+      rootObj.getWorldPosition(_rootPos);
+      target.getWorldPosition(_axis).sub(_rootPos); // 新链轴
+      if (_axis.lengthSq() < 1e-12) return;
+      _axis.normalize();
+      _v1.copy(_midPos).sub(_rootPos); // E' 离链轴方向
+      _v1.addScaledVector(_axis, -_v1.dot(_axis));
+      if (_v1.lengthSq() >= 1e-8) pole.setDirection(_v1);
+    };
+  }
+
   const handle: LimbControlHandle = {
-    name: spec.name, kind: 'limb', target, pole, elbowRings, rollModifier, modifier, rings,
+    name: spec.name, kind: 'limb', target, pole, elbowRings, rollModifier, modifier, rings, shoulderRings, shoulderMarker,
     get reach() { return reach; },
     setActive: (a) => { modifier.active = a; },
     setReachScale: (s) => { reachScale = s; applyReach(); },
@@ -260,13 +344,16 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   return {
     name: spec.name, kind: 'limb',
-    targets: [target],
-    // 端球参与 move 模式切换；端骨环走主选中体系，肘环走子选中（`${name}:elbow`，与主环互斥）；
+    targets: shoulderMarker ? [target, shoulderMarker] : [target],
+    // 端球参与 move 模式切换；端骨环走主选中体系，肘环/根环走子选中（与主环互斥）；
     // pole 球两种模式都在场（它还是 TwoBone 的 poleTarget，且是 E 模式选中肘部的唯一入口）：
     // W = 双通道操纵器，E = 可点标记
     moveTargets: [target],
     rotateRings: rings ? [rings] : [],
-    subRingGroups: [{ key: 'elbow', rings: [elbowRings] }],
+    subRingGroups: [
+      { key: 'elbow', rings: [elbowRings] },
+      ...(shoulderRings ? [{ key: 'root', rings: [shoulderRings] }] : []),
+    ],
     modifiers,
     onModeChange(mode) {
       pole.setMarkerMode(mode === 'rotate');
@@ -312,12 +399,19 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       }
       rings?.update(); // 环心/朝向初始同步（首解后姿势）
       elbowRings.update();
+      if (shoulderMarker && shoulderRings) {
+        // 先归位再携带：构造时按 rest 摆位，首解可能已把姿势搬离（与 bone 标记同款修正）
+        shoulderMarker.moveTo(rootObj.getWorldPosition(new Vector3()));
+        shoulderMarker.setCarry(rootObj);
+        shoulderRings.update();
+      }
     },
     update() {
       syncOrbitFrame();
       pole.update();
       elbowRings.update();
       rings?.update();
+      shoulderRings?.update();
     },
     handle,
     dispose() {
@@ -326,6 +420,11 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       pole.dispose();
       elbowRings.dispose();
       rings?.dispose();
+      if (shoulderMarker) {
+        ctx.scene.remove(shoulderMarker);
+        shoulderMarker.dispose();
+      }
+      shoulderRings?.dispose();
     },
   };
 }

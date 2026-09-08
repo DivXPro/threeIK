@@ -30,8 +30,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       // 角色朝向（由加载器按模型局部前方实测）：方向锥轴/pole 自动摆位的参照
       const facing = character.facing;
 
-      // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 胸口/肩/脖子(直接掰骨)
-      // → 双臂(肘 pole 朝后) → head(注视)。声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成。
+      // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 胸口/脖子(直接掰骨)
+      // → 双臂(肩=大臂旋转环、肘 pole 朝后) → head(注视)。声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成。
       // 初始化保持 T 姿势：位置球不设 position（缺省 = 端骨 rest 世界位置，零位移）；keepAlive 默认 1
       // （完全伸直）：pole 球恒 ⊥ 链轴，roll 修正把肘/膝方向带过退化点，四肢能真正伸直到 rest
       ctl = createSkeletonControls({
@@ -61,19 +61,17 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           },
           // 脊柱 FABRIK 拉躯干（Spine→Neck）
           { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff },
-          // 直接掰骨（rotate 模式显示）：胸口拧上半身/侧倾、左右肩端肩耸肩。
-          // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧），肩膀环在手臂 TwoBone 之前（送肩后手球仍钉住）
+          // 直接掰骨（rotate 模式显示）：胸口拧上半身/侧倾、脖子摆头。
+          // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧）；脖子环声明在头部注视之前
+          // （同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
           { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.28 },
-          // 肩部掰的是锁骨（靠脖子根，和胸口/脖子标记挤在一起）；标记球挂到大臂骨根部（肩膀头）分流
-          { kind: 'bone', name: 'shoulderL', bone: 'mixamorigLeftShoulder', markerBone: 'mixamorigLeftArm', color: 0xffaa66 },
-          { kind: 'bone', name: 'shoulderR', bone: 'mixamorigRightShoulder', markerBone: 'mixamorigRightArm', color: 0x66ddaa },
-          // 脖子环声明在头部注视之前（同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
           { kind: 'bone', name: 'neck', bone: 'mixamorigNeck', color: 0xdddd99 },
           {
             kind: 'limb', name: 'armL',
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
             color: 0xff5533,
             endRotation: true, // 手腕翻向
+            rootRotation: true, // 肩部 = 肩关节掰大臂（扭转+摆动，手跟随）——不掰锁骨，那不符合人体构造
             // 肘 pole：球以定长绕「肩→腕」链轴转（轨道球），初始方向提示摆肘的后下方（世界 -Z = 身后，≈自然垂臂的弯曲方向）
             pole: { color: 0xccff66, position: [0.38, 0.98, -0.2] },
           },
@@ -82,6 +80,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
             color: 0x33ff77,
             endRotation: true,
+            rootRotation: true,
             pole: { color: 0x66ffcc, position: [-0.38, 0.98, -0.2] },
           },
           // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后
@@ -104,7 +103,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       const armRH = ctl.get<LimbControlHandle>('armR')!;
       const spineH = ctl.get<ChainControlHandle>('spine')!;
       const headH = ctl.get<LookAtControlHandle>('head')!;
-      const bones = ['chest', 'neck', 'shoulderL', 'shoulderR']
+      const bones = ['chest', 'neck']
         .map((n) => ctl!.get<BoneControlHandle>(n)!);
       const limbs = [legLH, legRH, armLH, armRH];
 
@@ -132,7 +131,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
 
       // 操纵器模式（Maya W/E）：W = 移动球 + 肘/膝 pole 球（双通道影子球）；E = 旋转环
-      // （双通道控制点：髋/脚/手 + 旋转专用：胸口/脖子/肩/脚尖 + 肘/膝二维环：扭转 + 伸缩）
+      // （双通道控制点：髋/脚/手 + 旋转专用：胸口/脖子/脚尖 + 肘/膝二维环：扭转 + 伸缩 + 肩三维环：大臂扭转+摆动）
       let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;
@@ -167,9 +166,9 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           f.add(mod as CCDIkModifier, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
         }
       }
-      // 直接掰骨（胸口/脖子/肩）：旋转专用控制点，rotate 模式（E）显示
+      // 直接掰骨（胸口/脖子）：旋转专用控制点，rotate 模式（E）显示
       const fBone = gui.addFolder('直接掰骨（E 模式）');
-      for (const [i, name] of ['胸口', '脖子', '左肩', '右肩'].entries()) {
+      for (const [i, name] of ['胸口', '脖子'].entries()) {
         fBone.add(bones[i]!.modifier, 'active').name(name);
       }
       // 球的范围钳制参数（区别于求解器的"求解角步长"）

@@ -449,6 +449,95 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
+  it('根关节环（rootRotation）·twist：绕大腿轴拧 = 膝钉住、脚绕轴摆，两段骨长与链距全保', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96, rootRotation: true },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+    ctl.setManipulatorMode('rotate');
+
+    // 子选中 `${name}:root` 才上场；根环在髋关节（标记球常驻选中入口）
+    expect(legH.shoulderRings!.visible).toBe(false);
+    ctl.select('leg:root');
+    expect(legH.shoulderRings!.visible).toBe(true);
+    expect(legH.elbowRings.visible).toBe(false); // 与肘环互斥
+    expect(legH.shoulderMarker!.ball.visible).toBe(true);
+
+    const hip = () => rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const foot = () => rig.getBoneAt(rig.boneIndex('FootL')).getWorldPosition(new Vector3());
+    const hip0 = hip(); const knee0 = knee(); const foot0 = foot();
+    const chainDist0 = hip0.distanceTo(foot0);
+    // twist 环 ⊥ 大腿轴（髋→膝）：环上两个相距 +90° 的点（避开环交点，起始点偏半格）
+    const thighAxis = knee0.clone().sub(hip0).normalize();
+    const r = ringR(legH.shoulderRings!);
+    const u1 = new Vector3().crossVectors(thighAxis, new Vector3(1, 0, 0)).normalize();
+    const u2 = new Vector3().crossVectors(thighAxis, u1);
+    const v0 = u1.clone().addScaledVector(u2, 0.5).normalize();
+    const v1 = new Vector3().crossVectors(thighAxis, v0);
+    dom.fire('pointerdown', clientFor(camera, hip0.clone().addScaledVector(v0, r)));
+    expect(legH.shoulderRings!.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, hip0.clone().addScaledVector(v1, r)));
+    dom.fire('pointerup', {});
+    converge();
+
+    // 髋（根）与膝（在大腿轴上）钉住不动；脚绕大腿轴摆了 ~90°；骨长与链距全保
+    expect(hip().distanceTo(hip0)).toBeLessThan(1e-3);
+    expect(knee().distanceTo(knee0)).toBeLessThan(1e-3);
+    expect(foot().distanceTo(foot0)).toBeGreaterThan(0.05);
+    expect(foot().distanceTo(knee())).toBeCloseTo(0.4, 3); // 小腿长
+    expect(hip().distanceTo(foot())).toBeCloseTo(chainDist0, 3); // 链距（弯度不变）
+    ctl.dispose();
+  });
+
+  it('根关节环（rootRotation）·swing：绕弯折轴摆 = 膝绕髋画弧、弯度不变、脚跟随（IK 真相同步）', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom,
+      controls: [
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96, rootRotation: true },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
+    converge();
+    ctl.setManipulatorMode('rotate');
+    ctl.select('leg:root');
+
+    const hip = () => rig.getBoneAt(rig.boneIndex('UpLegL')).getWorldPosition(new Vector3());
+    const knee = () => rig.getBoneAt(rig.boneIndex('LegL')).getWorldPosition(new Vector3());
+    const foot = () => rig.getBoneAt(rig.boneIndex('FootL')).getWorldPosition(new Vector3());
+    const hip0 = hip(); const knee0 = knee(); const foot0 = foot();
+    const chainDist0 = hip0.distanceTo(foot0);
+    // swing 环 ⊥ 弯折轴（此姿势 ≈+x）：环上 +y 点拖到 +z 点 = 绕弯折轴 +90°（整条腿向前摆平）
+    const r = ringR(legH.shoulderRings!);
+    dom.fire('pointerdown', clientFor(camera, hip0.clone().add(new Vector3(0, r, 0))));
+    expect(legH.shoulderRings!.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, hip0.clone().add(new Vector3(0, 0, r))));
+    dom.fire('pointerup', {});
+    converge();
+
+    // 刚体旋转：膝绕髋画弧（大腿长不变）、脚跟随、链距不变（弯度不变）、髋钉住
+    expect(hip().distanceTo(hip0)).toBeLessThan(1e-3);
+    expect(knee().distanceTo(hip0)).toBeCloseTo(0.4, 3); // 大腿长
+    expect(knee().distanceTo(knee0)).toBeGreaterThan(0.05); // 膝真的摆了
+    expect(foot().distanceTo(knee())).toBeCloseTo(0.4, 3); // 小腿长
+    expect(hip().distanceTo(foot())).toBeCloseTo(chainDist0, 3); // 弯度不变
+    // 端球真相同步：球贴着新脚位（IK 下一帧解回同一姿势，不反弹）
+    expect(legH.target.getWorldPosition(new Vector3()).distanceTo(foot())).toBeLessThan(0.02);
+    ctl.dispose();
+  });
+
   it('pole 双通道·径向拖 = 弯度：外拽手收回膝弯出（朝向不变），推回轴心腿伸直', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);

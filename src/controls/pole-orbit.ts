@@ -231,6 +231,11 @@ export class PoleOrbit extends Object3D {
     this.syncArrowsVisibility();
   }
 
+  /** 运行期换色（主题切换等）：pole 球没有选中变色逻辑，立即生效 */
+  setColor(color: number): void {
+    this.material.color.setHex(color);
+  }
+
   /** 开关轴箭头（Maya Move 样式移动操纵器，与 DragTarget 同款）：拖箭头 = 沿该世界轴单轴挪球，
    *  落回轨道分解为朝向 + 弯度。len 缺省 = 8 倍球半径。箭头只在选中肘部且非标记模式时显示 */
   setAxisHandles(on: boolean, len?: number): void {

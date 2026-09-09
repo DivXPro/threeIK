@@ -72,6 +72,57 @@ rig.addModifier(new CCDIkModifier(newChains));
 
 `IterateIKModifier`（CCD / FABRIK 的基类）另有 `setChains()` 可原地替换链配置。同一 modifier 实例重复 `addModifier` 会被忽略。
 
+## 接入指南：控制点装配（threeik/controls）
+
+核心层之上是交互编辑层：声明式控制点装配器，入口为子路径 `threeik/controls`。一句话模型：**球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）**。
+
+```ts
+import { createSkeletonControls } from 'threeik/controls';
+
+const ctl = createSkeletonControls({
+  rig, scene, camera,
+  dom: renderer.domElement,   // 指针事件宿主
+  facing,                     // 角色朝向（世界系），缺省 (0,0,-1)
+  controls: [
+    { kind: 'root', name: 'hips', bone: 'Hips', rotation: true },
+    { kind: 'limb', name: 'armL', rootBone: 'LeftArm', middleBone: 'LeftForeArm', endBone: 'LeftHand',
+      endRotation: true, rootRotation: true, pole: { color: 0xccff66, position: [0.38, 0.98, -0.2] } },
+    { kind: 'chain', name: 'spine', rootBone: 'Spine', endBone: 'Neck' },
+    { kind: 'bone', name: 'chest', bone: 'Spine2' },
+    { kind: 'lookAt', name: 'head', rootBone: 'Neck', endBone: 'Head', position: [0, 1.7, 0.9] },
+  ],
+});
+
+// 每帧：接在上面「更新顺序契约」的第 3 步之后
+ctl.update(); // 携带 → 环跟随 → 引导线 → 操纵器屏幕恒定大小
+```
+
+五种内置 kind：`root`（重心）、`limb`（四肢 TwoBone + pole 肘/膝朝向）、`chain`（脊柱 FABRIK）、`bone`（直接掰骨 FK）、`lookAt`（注视 CCD）。同骨架上多个控制点的 modifier 求解顺序由装配器按骨深度自动排（浅的先解）。`ctl.get(name)` 取句柄：钳制参数（`setReachScale`/`setKeepAlive` 等）、`setActive` 开关都在句柄上。自定义控制点用 `registerControlKind` 注册，走同一装配管线。
+
+### 换模型
+
+库不绑定模型，任何单根骨骼树都行。换模型 = 重建：
+
+1. 加载新模型，`new SkeletonRig(newRoot)`（拓扑变更用 `rig.rebind`，注意它以当前 TRS 为新 rest）；
+2. 控制点按**骨骼名**声明，把新模型的骨名填进 spec——Mixamo / VRM / ReadyPlayerMe 的命名差异可用重定向模块的预设与 `suggestBoneMap` 解析；
+3. `ctl.dispose()` 后用新 rig 重新 `createSkeletonControls`；
+4. 模型朝向不是 -Z 时传 `facing`。
+
+### 初始姿势
+
+- spec 的 `position` 设控制球初始世界位置，装配首解即把骨架解过去（手球放低 = 手臂下垂）；不设则保持 rest；
+- rest pose = rig 构造/rebind 时刻骨骼的 TRS：创建 rig 前把骨骼预摆到目标姿势，它即成为 rest（`rig.resetToRest()` 回到它）。
+
+### 操纵器模式与选中
+
+Maya 式 W/E：`ctl.setManipulatorMode('move' | 'rotate')`——W = 位置球 + 轴箭头，E = 旋转环；双通道控制点的球在 E 退化为可点标记（大小不变，只切可拖性）。选中机制：只有选中的控制点显示操纵器，点操纵器自动选中，点空白失焦。子选中（`'armL:elbow'` / `'armL:root'`）让肘部/肩部成为独立选中目标。纯旋转控制点（bone、肩/髋根环）选中即出环，不看 W/E。
+
+### 颜色与外观
+
+- 声明期：spec 的 `color`（球）、`pole.color`、`ballRadius`、`ringRadius`；
+- 运行期换色：`target.setColor(hex)` / `pole.setColor(hex)`（经句柄取到：`ctl.get('armL')!.target.setColor(0xff0000)`）；选中高亮中保持亮黄，取消选中落回新色；
+- 视觉语言常量：`MARKER_SCALE`（常驻标记球身份尺寸）、`MARKER_SELECTED_COLOR`（选中高亮黄）——自定义 kind 做标记球时直接引用，观感与内置一致。
+
 ## 已知限制
 
 - v1 假定**单根人形骨架**（多根骨 / 多棵骨树未支持）。

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Object3D, SphereGeometry, Vector3 } from 'three';
-import { DragTarget } from '../../src/controls/drag-target';
+import { MeshBasicMaterial, Object3D, SphereGeometry, Vector3 } from 'three';
+import { DragTarget, MARKER_SELECTED_COLOR } from '../../src/controls/drag-target';
+import { PoleOrbit } from '../../src/controls/pole-orbit';
 import { makeCamera, makeDomStub } from './test-utils';
+
+const colorOf = (t: DragTarget) => (t.ball.material as MeshBasicMaterial).color.getHex();
 
 function anchorAt(x: number, y: number, z: number) {
   const o = new Object3D();
@@ -10,6 +13,35 @@ function anchorAt(x: number, y: number, z: number) {
 }
 
 describe('DragTarget', () => {
+  it('setColor：常态立即生效；选中高亮中保持亮黄，取消选中落回新本色；大小不受影响', () => {
+    const t = new DragTarget(makeCamera(), makeDomStub(), new Vector3(), 0xff0000);
+    expect(colorOf(t)).toBe(0xff0000);
+    t.setColor(0x00ff00);
+    expect(colorOf(t)).toBe(0x00ff00);
+    // 标记 + 选中 = 高亮中：换色不改当前显示，取消选中后落回新本色
+    t.setMarkerMode(true);
+    t.setSelected(true);
+    expect(colorOf(t)).toBe(MARKER_SELECTED_COLOR);
+    t.setColor(0x0000ff);
+    expect(colorOf(t)).toBe(MARKER_SELECTED_COLOR);
+    t.setSelected(false);
+    expect(colorOf(t)).toBe(0x0000ff);
+    expect(t.ball.scale.x).toBe(1); // 全程不动大小
+    t.dispose();
+  });
+
+  it('PoleOrbit.setColor：运行期换 pole 球颜色', () => {
+    const anchor = new Object3D();
+    const axisTo = new Object3D();
+    axisTo.position.set(0, 1, 0);
+    const pole = new PoleOrbit(makeCamera(), makeDomStub(), { color: 0xffcc00 });
+    pole.bind(anchor, axisTo);
+    expect((pole.ball.material as MeshBasicMaterial).color.getHex()).toBe(0xffcc00);
+    pole.setColor(0x123456);
+    expect((pole.ball.material as MeshBasicMaterial).color.getHex()).toBe(0x123456);
+    pole.dispose();
+  });
+
   it('初始摆位 + 默认/自定义视觉球半径', () => {
     const camera = makeCamera();
     const dom = makeDomStub();

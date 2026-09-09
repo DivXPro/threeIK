@@ -46,7 +46,7 @@ export class DragTarget extends Object3D {
   /** 视觉球半径（拖拽命中在此基础上再加按相机距离换算的容差） */
   readonly ballRadius: number;
   private readonly material: MeshBasicMaterial;
-  private readonly baseColor: number;
+  private baseColor: number;
   private dragging = false;
   private readonly dom: DragDom;
   private readonly onPointerDown: (e: DragPointerEvent) => void;
@@ -242,6 +242,13 @@ export class DragTarget extends Object3D {
   /** 标记球配色：选中 = 亮黄，未选中 = 本色。大小不由这里管——常驻标记的身份尺寸由 kind 构建期定 */
   private syncMarkerAppearance(): void {
     this.material.color.setHex(this.markerMode && this.selected ? MARKER_SELECTED_COLOR : this.baseColor);
+  }
+
+  /** 运行期换色（主题切换等）：更新本色。当前处于选中高亮则保持亮黄，
+   *  取消选中后落回新本色；大小与可拖性不受影响 */
+  setColor(color: number): void {
+    this.baseColor = color;
+    this.syncMarkerAppearance();
   }
 
   /** 每帧调用（ctl.update）：轴箭头屏幕恒定大小——按相机距离换算世界缩放 */

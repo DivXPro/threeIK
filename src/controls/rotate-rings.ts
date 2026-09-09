@@ -8,8 +8,8 @@ const HIT_TOLERANCE_PER_METER = 0.011;
 const RING_TUBE = 0.02; // 管粗（相对环半径）：细线风格，命中容差同步吃这个值
 const _unitTorus = new TorusGeometry(1, RING_TUBE, 10, 64);
 
-/** 背向屏幕的半环混入的灰色（保留 20% 本色：红环后半偏粉灰、高亮后半偏暖灰） */
-const BACK_HALF_COLOR = 0x808080;
+/** 背向屏幕的半环混入的灰色（偏白的浅灰；保留 20% 本色：红环后半偏粉、高亮后半偏暖） */
+const BACK_HALF_COLOR = 0xb0b0b0;
 
 /**
  * 后半环染灰的 shader 补丁（onBeforeCompile，MeshBasicMaterial 标准扩展点）：

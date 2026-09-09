@@ -1,0 +1,37 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write # OIDC trusted publishing 必需（npm 侧不存任何 token）
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # trusted publishing 仅支持 GitHub 托管 runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # 自带 npm 11.x；trusted publishing 要求 npm CLI >= 11.5.1
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # 版本守卫：tag 必须与 package.json 的 version 一致，防止发错版本
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          [ "$TAG" = "$PKG" ] || { echo "tag v$TAG != package.json version $PKG"; exit 1; }
+
+      # OIDC 凭证由 runner 自动换发——不要设 NODE_AUTH_TOKEN（设了会回退到旧 token 通道）
+      - run: npm publish --access public

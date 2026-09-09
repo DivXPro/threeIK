@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { SkeletonRig, BoneMap, mixamoPreset, suggestBoneMap } from 'threeik';
+import { SkeletonRig, BoneMap, mixamoPreset, suggestBoneMap } from '@dreamerbird/threeik';
 
 export interface LoadedCharacter {
   root: THREE.Object3D;

@@ -1,5 +1,5 @@
 {
-  "name": "threeik",
+  "name": "@dreamerbird/threeik",
   "version": "0.0.1",
   "description": "Humanoid skeleton editing and IK library for three.js, ported from Godot's skeleton architecture",
   "type": "module",

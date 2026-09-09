@@ -1,5 +1,5 @@
 import GUI from 'lil-gui';
-import { RetargetModifier } from 'threeik';
+import { RetargetModifier } from '@dreamerbird/threeik';
 import { loadCharacter, type LoadedCharacter } from './character';
 import { buildMannequin } from './mannequin';
 import type { TabHandle, PlaygroundContext } from './main';

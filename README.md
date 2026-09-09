@@ -1,11 +1,11 @@
-# threeik
+# threeik（npm：`@dreamerbird/threeik`）
 
 three.js 的人形骨架编辑基础库。骨架数据层采用扁平化分解存储（rest / base / work 三套局部姿势 + 懒计算全局姿势缓存），modifier 管线提供 CCD / FABRIK / Two-Bone 三种 IK 求解器、关节角锥限制（`ConeJointLimitation`）、Aim / CopyTransform 约束，以及基于骨名映射的动画重定向（`RetargetModifier`，内置 Mixamo / VRM / ReadyPlayerMe 预设）。算法与架构参考 Godot 4 的 SkeletonModifier3D / SkeletonIK3D 体系移植。
 
 ## 安装
 
 ```bash
-npm i threeik three
+npm i @dreamerbird/threeik three
 ```
 
 `three` 为 peer 依赖（>= 0.160.0）；除此之外无运行时依赖。
@@ -13,7 +13,7 @@ npm i threeik three
 ## 最小用例
 
 ```ts
-import { SkeletonRig, CCDIkModifier } from 'threeik';
+import { SkeletonRig, CCDIkModifier } from '@dreamerbird/threeik';
 import { Object3D } from 'three';
 
 // rootBone：骨架根 Bone（v1 假定单根人形骨架）
@@ -72,12 +72,12 @@ rig.addModifier(new CCDIkModifier(newChains));
 
 `IterateIKModifier`（CCD / FABRIK 的基类）另有 `setChains()` 可原地替换链配置。同一 modifier 实例重复 `addModifier` 会被忽略。
 
-## 接入指南：控制点装配（threeik/controls）
+## 接入指南：控制点装配（@dreamerbird/threeik/controls）
 
-核心层之上是交互编辑层：声明式控制点装配器，入口为子路径 `threeik/controls`。一句话模型：**球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）**。
+核心层之上是交互编辑层：声明式控制点装配器，入口为子路径 `@dreamerbird/threeik/controls`。一句话模型：**球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）**。
 
 ```ts
-import { createSkeletonControls } from 'threeik/controls';
+import { createSkeletonControls } from '@dreamerbird/threeik/controls';
 
 const ctl = createSkeletonControls({
   rig, scene, camera,

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SkeletonRig, HUMANOID_PROFILE } from 'threeik';
+import { SkeletonRig, HUMANOID_PROFILE } from '@dreamerbird/threeik';
 
 /** 按 profile 层级生成无网格骨架（SkeletonHelper 可视化），scale 缩放肢体长度 */
 export function buildMannequin(scale = 1.4): { root: THREE.Object3D; rig: SkeletonRig; helper: THREE.SkeletonHelper } {

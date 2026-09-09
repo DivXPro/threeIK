@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "three": "^0.170.0",
-    "threeik": "file:..",
-    "lil-gui": "^0.20.0"
+    "lil-gui": "^0.20.0",
+    "@dreamerbird/threeik": "file:.."
   },
   "devDependencies": {
     "vite": "^5.4.11",

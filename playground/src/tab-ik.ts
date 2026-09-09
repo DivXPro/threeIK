@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import GUI from 'lil-gui';
-import type { CCDIkModifier } from 'threeik';
+import type { CCDIkModifier } from '@dreamerbird/threeik';
 import {
   createSkeletonControls,
   type BoneControlHandle,
@@ -9,7 +9,7 @@ import {
   type LookAtControlHandle,
   type RootControlHandle,
   type SkeletonControls,
-} from 'threeik/controls';
+} from '@dreamerbird/threeik/controls';
 import { loadCharacter, type LoadedCharacter } from './character';
 import type { TabHandle, PlaygroundContext } from './main';
 

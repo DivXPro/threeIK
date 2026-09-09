@@ -1,4 +1,4 @@
-export { DragTarget } from './drag-target';
+export { DragTarget, MARKER_SCALE, MARKER_SELECTED_COLOR } from './drag-target';
 export type { DragControl, DragDom, DragPointerEvent } from './drag-target';
 export { PoleOrbit } from './pole-orbit';
 export { RotateRings } from './rotate-rings';

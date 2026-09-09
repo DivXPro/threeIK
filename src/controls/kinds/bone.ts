@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { RotateRings } from '../rotate-rings';
-import { DragTarget } from '../drag-target';
+import { DragTarget, MARKER_SCALE } from '../drag-target';
 import { CopyTransformModifier } from '../../modifiers/constraints/copy-transform';
 import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlSpecBase } from '../types';
 
@@ -35,6 +35,7 @@ export function buildBoneControl(ctx: ControlBuildContext, spec: BoneControlSpec
   const markerBone = spec.markerBone ? ctx.bone(spec.markerBone) : bone;
   const marker = new DragTarget(ctx.camera, ctx.dom, markerBone.getWorldPosition(new Vector3()), spec.color ?? 0x88ddff, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
   marker.setMarkerMode(true); // 永远是标记：不可拖，点击 = 选中
+  marker.ball.scale.setScalar(MARKER_SCALE); // 常驻标记身份：比可拖球小一号（大小此后不再变）
   marker.onPress = () => ctx.select(spec.name);
   ctx.scene.add(marker);
 

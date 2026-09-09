@@ -3,7 +3,7 @@ import { ThreeIKError } from '../../core/errors';
 import { TwoBoneIkModifier } from '../../modifiers/ik/two-bone-ik';
 import { CopyTransformModifier } from '../../modifiers/constraints/copy-transform';
 import { RollModifier } from '../../modifiers/constraints/roll';
-import { DragTarget } from '../drag-target';
+import { DragTarget, MARKER_SCALE } from '../drag-target';
 import { PoleOrbit } from '../pole-orbit';
 import { RotateRings } from '../rotate-rings';
 import { measureChain } from '../measure-chain';
@@ -276,6 +276,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   if (spec.rootRotation) {
     shoulderMarker = new DragTarget(ctx.camera, ctx.dom, rootObj.getWorldPosition(new Vector3()), spec.color ?? 0xff5533, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
     shoulderMarker.setMarkerMode(true); // 常驻标记：不可拖，点 = 选中根关节
+    shoulderMarker.ball.scale.setScalar(MARKER_SCALE); // 常驻标记身份：比可拖球小一号（大小此后不再变）
     shoulderMarker.onPress = () => ctx.select(`${spec.name}:root`);
     ctx.scene.add(shoulderMarker);
 

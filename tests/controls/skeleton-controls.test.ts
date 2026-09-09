@@ -735,6 +735,7 @@ describe('createSkeletonControls', () => {
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(legH.pole.isDragging).toBe(true); // pole 在 move 模式可拖（轨道球，纯位置控制点）
     dom.fire('pointerup', {});
+    const ballScaleW = legH.target.ball.scale.x; // W 模式球大小基线（W/E 切换不应改变）
     // 点击位置取对角线方向：环心正上/正侧会落进髋球轴箭头的命中区（箭头优先于环的断言对象）
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
@@ -744,6 +745,7 @@ describe('createSkeletonControls', () => {
     ctl.setManipulatorMode('rotate');
     expect(hipsH.rings!.visible).toBe(false); // 未选中：环不上场
     expect(legH.target.ball.visible).toBe(true); // 球变标记，不藏
+    expect(legH.target.ball.scale.x).toBe(ballScaleW); // 标记化只切可拖性，球大小不变
     expect(legH.pole.visible).toBe(true); // pole 球变标记，不藏（E 模式选中肘部的入口）
     expect(legH.elbowRings.visible).toBe(true); // 肘部已选中：肘环在场
     expect(legH.rings!.visible).toBe(false); // 端骨环走主选中：选肘部不上场
@@ -783,6 +785,7 @@ describe('createSkeletonControls', () => {
     ctl.setManipulatorMode('move');
     expect(hipsH.rings!.visible).toBe(false);
     expect(legH.target.ball.visible).toBe(true);
+    expect(legH.target.ball.scale.x).toBe(ballScaleW); // 切回 W 大小也不变
     ctl.dispose();
   });
 
@@ -1023,7 +1026,7 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
-  it('纯旋转控制点（bone）选中即出环不看 W/E；标记球选中高亮（放大+亮黄），取消选中复原', () => {
+  it('纯旋转控制点（bone）选中即出环不看 W/E；标记球选中变亮黄（大小恒定），取消选中复原', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);
     const ctl = createSkeletonControls({
@@ -1032,16 +1035,16 @@ describe('createSkeletonControls', () => {
     });
     const chestH = ctl.get<BoneControlHandle>('chest')!;
     scene.updateMatrixWorld(true);
-    // 默认 move 模式、未选中：环收着，标记球 0.7 本色
+    // 默认 move 模式、未选中：环收着，标记球 0.7 身份尺寸 + 本色
     expect(chestH.rings.visible).toBe(false);
     expect(chestH.marker.ball.scale.x).toBeCloseTo(0.7, 6);
     expect(ballColor(chestH.marker)).toBe(0x88ddff);
-    // W 模式点标记球：选中 → 环立即上场（可拖），标记球放大高亮——点没点中一眼可见
+    // W 模式点标记球：选中 → 环立即上场（可拖），标记球变亮黄（大小不变）——点没点中一眼可见
     dom.fire('pointerdown', clientFor(camera, chestH.marker.getWorldPosition(new Vector3())));
     dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe('chest');
     expect(chestH.rings.visible).toBe(true);
-    expect(chestH.marker.ball.scale.x).toBeCloseTo(0.95, 6);
+    expect(chestH.marker.ball.scale.x).toBeCloseTo(0.7, 6); // 大小恒定：选中不放大
     expect(ballColor(chestH.marker)).toBe(MARKER_SELECTED_COLOR);
     // W 模式下环真的能拖（选中即出环不是摆设）
     scene.updateMatrixWorld(true);
@@ -1073,15 +1076,15 @@ describe('createSkeletonControls', () => {
     scene.updateMatrixWorld(true);
     // 默认 move 模式未选中：根环收着
     expect(shoulderRings.visible).toBe(false);
-    // W 模式选中根关节子目标：根环立即上场，标记球高亮
+    // W 模式选中根关节子目标：根环立即上场，标记球变亮黄（大小恒定 0.7 身份尺寸）
     ctl.select('leg:root');
     expect(shoulderRings.visible).toBe(true);
-    expect(shoulderMarker.ball.scale.x).toBeCloseTo(0.95, 6);
+    expect(shoulderMarker.ball.scale.x).toBeCloseTo(0.7, 6);
     expect(ballColor(shoulderMarker)).toBe(MARKER_SELECTED_COLOR);
     // 主选中（腿本体）：根环收起，肩/髋标记不高亮（高亮跟随子选中，不跟随主选中）
     ctl.select('leg');
     expect(shoulderRings.visible).toBe(false);
-    expect(shoulderMarker.ball.scale.x).toBeCloseTo(0.7, 6);
+    expect(ballColor(shoulderMarker)).not.toBe(MARKER_SELECTED_COLOR);
     // 肘子选中（双通道）：W 模式不出肘环（pole 轴箭头值班），根环也不串场
     ctl.select('leg:elbow');
     expect(shoulderRings.visible).toBe(false);

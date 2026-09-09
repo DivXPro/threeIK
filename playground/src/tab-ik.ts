@@ -42,7 +42,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         dragControl: ctx.dragControl,
         facing,
         controls: [
-          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true, ringRadius: 0.24 },
+          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true },
           {
             kind: 'limb', name: 'legL',
             rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
@@ -66,7 +66,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           // 直接掰骨（纯旋转：点标记球选中即出环，不看 W/E）：胸口拧上半身/侧倾、脖子摆头。
           // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧）；脖子环声明在头部注视之前
           // （同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
-          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc, ringRadius: 0.28 },
+          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc },
           { kind: 'bone', name: 'neck', bone: 'mixamorigNeck', color: 0xdddd99 },
           {
             kind: 'limb', name: 'armL',

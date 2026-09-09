@@ -3,13 +3,14 @@ import GUI from 'lil-gui';
 import type { CCDIkModifier } from 'threeik';
 import {
   createSkeletonControls,
+  type BoneControlHandle,
   type ChainControlHandle,
   type LimbControlHandle,
   type LookAtControlHandle,
   type RootControlHandle,
   type SkeletonControls,
 } from 'threeik/controls';
-import { loadSoldier, type LoadedCharacter } from './character';
+import { loadCharacter, type LoadedCharacter } from './character';
 import type { TabHandle, PlaygroundContext } from './main';
 
 export function createIkTab(ctx: PlaygroundContext): TabHandle {
@@ -17,22 +18,22 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
   let character: LoadedCharacter | null = null;
   let ctl: SkeletonControls | null = null;
   let unsubFrame: (() => void) | null = null;
+  let onKey: ((e: KeyboardEvent) => void) | null = null;
 
   return {
     async mount() {
-      character = await loadSoldier(ctx.scene);
+      character = await loadCharacter(ctx.scene);
       const rig = character.rig;
       // 调试：控制台可直读 rig/控制点句柄（page 重载后失效，随 mount 重建）
       Object.assign((window as unknown as { __threeik: Record<string, unknown> }).__threeik, { rig });
 
-      // 角色朝向（模型局部前方 -Z 经 root 旋转到世界）：方向锥轴/pole 自动摆位的参照
-      const facing = new THREE.Vector3(0, 0, -1)
-        .applyQuaternion(character.root.getWorldQuaternion(new THREE.Quaternion()));
+      // 角色朝向（由加载器按模型局部前方实测）：方向锥轴/pole 自动摆位的参照
+      const facing = character.facing;
 
-      // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 双臂(肘 pole 朝后) → head(注视)。
-      // 声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成（hips 最先、head 最后）。
-      // 手球初始位置须在臂可达范围内部（距肩 ~70% 链长）：贴在球面上手臂完全伸直时
-      // 肘落在肩→腕轴上，pole 绕轴旋转在几何上是零效应，肘 pole 会"拖了没反应"
+      // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 胸口/脖子(直接掰骨)
+      // → 双臂(肩=大臂旋转环、肘 pole 朝后) → head(注视)。声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成。
+      // 初始化保持 T 姿势：位置球不设 position（缺省 = 端骨 rest 世界位置，零位移）；keepAlive 默认 1
+      // （完全伸直）：pole 球恒 ⊥ 链轴，roll 修正把肘/膝方向带过退化点，四肢能真正伸直到 rest
       ctl = createSkeletonControls({
         rig,
         scene: ctx.scene,
@@ -41,40 +42,48 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         dragControl: ctx.dragControl,
         facing,
         controls: [
-          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0] },
+          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true },
           {
             kind: 'limb', name: 'legL',
             rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
-            color: 0x3388ff, position: [0.25, 0.3, 0.4],
+            color: 0x3388ff,
             carry: false, // 脚钉地：下蹲演示的基础（锚点 UpLeg 随髋动）
-            steer: true,
+            endRotation: true, // ①脚朝向：rotate 模式下脚部旋转环
+            rootRotation: true, // 髋部 = 髋关节掰大腿（扭转+摆动，脚跟随）
             pole: { color: 0xffcc00, position: [0.25, 0.9, 1.2] },
           },
           {
             kind: 'limb', name: 'legR',
             rootBone: 'mixamorigRightUpLeg', middleBone: 'mixamorigRightLeg', endBone: 'mixamorigRightFoot',
-            color: 0x22dddd, position: [-0.25, 0.3, 0.4],
+            color: 0x22dddd,
             carry: false,
-            steer: true,
+            endRotation: true,
+            rootRotation: true,
             pole: { color: 0xff9933, position: [-0.25, 0.9, 1.2] },
           },
           // 脊柱 FABRIK 拉躯干（Spine→Neck）
-          { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff, position: [0, 1.25, 0.3] },
+          { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff },
+          // 直接掰骨（纯旋转：点标记球选中即出环，不看 W/E）：胸口拧上半身/侧倾、脖子摆头。
+          // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧）；脖子环声明在头部注视之前
+          // （同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
+          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc },
+          { kind: 'bone', name: 'neck', bone: 'mixamorigNeck', color: 0xdddd99 },
           {
             kind: 'limb', name: 'armL',
             rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
-            color: 0xff5533, position: [0.35, 1.33, 0.32],
-            steer: true,
-            // 肘 pole 默认在肘的下方偏后（≈肘朝下，自然垂臂的弯曲方向）：锥轴取背后方向，
-            // 半角 130° 覆盖垂臂姿势（膝的 100° 会把这些自然姿势挡在锥外）
-            pole: { color: 0xccff66, position: [0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
+            color: 0xff5533,
+            endRotation: true, // 手腕翻向
+            rootRotation: true, // 肩部 = 肩关节掰大臂（扭转+摆动，手跟随）——不掰锁骨，那不符合人体构造
+            // 肘 pole：球以定长绕「肩→腕」链轴转（轨道球），初始方向提示摆肘的后下方（世界 -Z = 身后，≈自然垂臂的弯曲方向）
+            pole: { color: 0xccff66, position: [0.38, 0.98, -0.2] },
           },
           {
             kind: 'limb', name: 'armR',
             rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
-            color: 0x33ff77, position: [-0.35, 1.33, 0.32],
-            steer: true,
-            pole: { color: 0x66ffcc, position: [-0.38, 0.98, 0.2], coneAxis: 'backward', coneAngleDeg: 130 },
+            color: 0x33ff77,
+            endRotation: true,
+            rootRotation: true,
+            pole: { color: 0x66ffcc, position: [-0.38, 0.98, -0.2] },
           },
           // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后
           { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, position: [0, 1.7, 0.9] },
@@ -84,7 +93,7 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
 
       const frameCb = () => {
         rig.update(1 / 60); // 无动画路径：base = rest，直接 update
-        ctl!.update();      // 求解后：携带 → steer 舵控 → 引导线
+        ctl!.update();      // 求解后：携带 → 环跟随 → 引导线
       };
       unsubFrame = ctx.onFrame(frameCb);
 
@@ -96,17 +105,18 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       const armRH = ctl.get<LimbControlHandle>('armR')!;
       const spineH = ctl.get<ChainControlHandle>('spine')!;
       const headH = ctl.get<LookAtControlHandle>('head')!;
+      const bones = ['chest', 'neck']
+        .map((n) => ctl!.get<BoneControlHandle>(n)!);
       const limbs = [legLH, legRH, armLH, armRH];
 
-      // 钳制参数。四肢伸展上限（poleKeepAlive）：完全伸直时肘/膝的可行解集从「两球交线圆」
-      // 退化成相切点，pole 失去选择自由——几何固有，非实现缺陷。96% 处仍留 ~6cm 回旋空间，
-      // pole 永远活着，肉眼读作"伸直"；滑到 1.0 可亲手体验退化点
+      // 钳制参数。四肢伸展上限（poleKeepAlive）：默认 1 = 完全伸直（pole 球恒 ⊥ 链轴，roll 修正
+      // 把肘/膝方向带过退化点——实测弯→伸→弯稳定）；滑到 <1 可体验「永远留弯度」的旧行为
+      // （注意 0.96 会在手臂这种短骨链上摆出 15°+ 上臂摆角，看起来像耸肩缩脖）
       const clampParams = {
         reachScale: 1,
-        poleKeepAlive: 0.96,
+        poleKeepAlive: 1,
         hipsRadius: 0.4,
         headRadius: 0.35, headAngleDeg: 105,
-        poleRadius: 0.2, poleAngleDeg: 100, elbowPoleAngleDeg: 130,
       };
       const applyReach = () => {
         for (const l of limbs) {
@@ -120,19 +130,29 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         headH.setRadius(clampParams.headRadius);
         headH.setConeAngleDeg(clampParams.headAngleDeg);
       };
-      const applyPoleCone = () => {
-        for (const l of [legLH, legRH]) {
-          l.setPoleRadius(clampParams.poleRadius);
-          l.setPoleConeAngleDeg(clampParams.poleAngleDeg);
-        }
-        for (const l of [armLH, armRH]) {
-          l.setPoleRadius(clampParams.poleRadius);
-          l.setPoleConeAngleDeg(clampParams.elbowPoleAngleDeg);
-        }
+      const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
+
+      // 操纵器模式（Maya W/E）：W = 移动球 + 肘/膝 pole 球（双通道影子球）；E = 旋转环。
+      // 纯旋转控制点（胸口/脖子/肩/髋）两种模式都选中即出环——W/E 只对双通道控制点（髋/脚/手/肘）有意义
+      let modeCtrl: { updateDisplay(): void } | null = null;
+      const applyMode = (m: 'move' | 'rotate') => {
+        params.manipulatorMode = m;
+        ctl!.setManipulatorMode(m);
+        modeCtrl?.updateDisplay(); // 键盘切换后 GUI 下拉框同步
       };
-      const params = { steerFallback: true };
+      const onKeyHandler = (e: KeyboardEvent) => {
+        if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+        if (e.key === 'w' || e.key === 'W') applyMode('move');
+        else if (e.key === 'e' || e.key === 'E') applyMode('rotate');
+        else if (e.key === 'Escape') ctl!.select(null); // 取消选中：操纵器（箭头/环）收起
+      };
+      onKey = onKeyHandler;
+      window.addEventListener('keydown', onKeyHandler);
 
       gui = new GUI({ title: 'IK' });
+      modeCtrl = gui.add(params, 'manipulatorMode', { '移动 (W)': 'move', '旋转 (E)': 'rotate' })
+        .name('操纵器模式')
+        .onChange((v: 'move' | 'rotate') => applyMode(v));
       for (const [name, mod] of [
         ['髋部 RootMotion', hipsH.modifier],
         ['TwoBone 左腿', legLH.modifier], ['TwoBone 右腿', legRH.modifier],
@@ -147,6 +167,11 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           f.add(mod as CCDIkModifier, 'maxIterations', 1, 30, 1).name('迭代次数');
           f.add(mod as CCDIkModifier, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
         }
+      }
+      // 直接掰骨（胸口/脖子）：旋转专用控制点，选中即出环（不看 W/E）
+      const fBone = gui.addFolder('直接掰骨');
+      for (const [i, name] of ['胸口', '脖子'].entries()) {
+        fBone.add(bones[i]!.modifier, 'active').name(name);
       }
       // 球的范围钳制参数（区别于求解器的"求解角步长"）
       const fClamp = gui.addFolder('钳制（拖球范围）');
@@ -166,19 +191,11 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       // 求解从"纯注视瞄准"退化成"摆放端骨"，头会拧去够球
       fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('半径(m)').onChange(applyHeadCone);
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
-      const fPole = fClamp.addFolder('膝/肘 pole 球');
-      fPole.add(clampParams, 'poleRadius', 0.1, 0.8, 0.05).name('半径(m)').onChange(applyPoleCone);
-      fPole.add(clampParams, 'poleAngleDeg', 30, 170, 1).name('膝半角(°)').onChange(applyPoleCone);
-      fPole.add(clampParams, 'elbowPoleAngleDeg', 30, 170, 1).name('肘半角(°)').onChange(applyPoleCone);
-      // B：伸展兜底舵控（拉直时的弯曲出口）：pole 拖拽中且链已顶到当前允许的最直时进入舵控——
-      // pole 球离开恒距球面自由飞，其到「肩→手球」连线的垂直距离直接映射为弯曲量：
-      // 拖离线远 → 弯（往哪边拖往哪边弯）；拖回线上 → 伸直（可逆）；绕线转 → 纯 swivel；
-      // 松手球吸回球面、恢复纯转本职。默认 96% 伸展上限下拖直即可触发
-      gui.add(params, 'steerFallback').name('pole 伸展舵控(拉直兜底)')
-        .onChange((v: boolean) => { for (const l of limbs) l.setSteer(v); });
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {
+      if (onKey) window.removeEventListener('keydown', onKey);
+      onKey = null;
       gui?.destroy();
       gui = null;
       unsubFrame?.();

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { FabrikModifier } from 'threeik';
-import { loadSoldier, type LoadedCharacter } from './character';
+import { loadCharacter, type LoadedCharacter } from './character';
 import { DragTarget } from 'threeik/controls';
 import { measureChain } from 'threeik/controls';
 import type { TabHandle, PlaygroundContext } from './main';
@@ -14,8 +14,8 @@ export function createAnimIkTab(ctx: PlaygroundContext): TabHandle {
 
   return {
     async mount() {
-      character = await loadSoldier(ctx.scene);
-      character.actions.get('Idle')!.play();
+      character = await loadCharacter(ctx.scene);
+      character.actions.get('idle')!.play();
       const rig = character.rig;
 
       // FABRIK 右手链 target：初始钉在固定世界点，可拖拽；钳制在右臂可达半径内（模型已转正，右臂在 -X 侧）

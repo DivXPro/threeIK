@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Object3D, SphereGeometry, Vector3 } from 'three';
-import { DragTarget } from '../../src/controls/drag-target';
+import { MeshBasicMaterial, Object3D, SphereGeometry, Vector3 } from 'three';
+import { DragTarget, MARKER_SELECTED_COLOR } from '../../src/controls/drag-target';
+import { PoleOrbit } from '../../src/controls/pole-orbit';
 import { makeCamera, makeDomStub } from './test-utils';
+
+const colorOf = (t: DragTarget) => (t.ball.material as MeshBasicMaterial).color.getHex();
 
 function anchorAt(x: number, y: number, z: number) {
   const o = new Object3D();
@@ -10,6 +13,35 @@ function anchorAt(x: number, y: number, z: number) {
 }
 
 describe('DragTarget', () => {
+  it('setColor：常态立即生效；选中高亮中保持亮黄，取消选中落回新本色；大小不受影响', () => {
+    const t = new DragTarget(makeCamera(), makeDomStub(), new Vector3(), 0xff0000);
+    expect(colorOf(t)).toBe(0xff0000);
+    t.setColor(0x00ff00);
+    expect(colorOf(t)).toBe(0x00ff00);
+    // 标记 + 选中 = 高亮中：换色不改当前显示，取消选中后落回新本色
+    t.setMarkerMode(true);
+    t.setSelected(true);
+    expect(colorOf(t)).toBe(MARKER_SELECTED_COLOR);
+    t.setColor(0x0000ff);
+    expect(colorOf(t)).toBe(MARKER_SELECTED_COLOR);
+    t.setSelected(false);
+    expect(colorOf(t)).toBe(0x0000ff);
+    expect(t.ball.scale.x).toBe(1); // 全程不动大小
+    t.dispose();
+  });
+
+  it('PoleOrbit.setColor：运行期换 pole 球颜色', () => {
+    const anchor = new Object3D();
+    const axisTo = new Object3D();
+    axisTo.position.set(0, 1, 0);
+    const pole = new PoleOrbit(makeCamera(), makeDomStub(), { color: 0xffcc00 });
+    pole.bind(anchor, axisTo);
+    expect((pole.ball.material as MeshBasicMaterial).color.getHex()).toBe(0xffcc00);
+    pole.setColor(0x123456);
+    expect((pole.ball.material as MeshBasicMaterial).color.getHex()).toBe(0x123456);
+    pole.dispose();
+  });
+
   it('初始摆位 + 默认/自定义视觉球半径', () => {
     const camera = makeCamera();
     const dom = makeDomStub();
@@ -103,5 +135,105 @@ describe('DragTarget', () => {
     // dispose 后事件不再生效
     dom.fire('pointerdown', { clientX: 400, clientY: 300 });
     expect(t.isDragging).toBe(false);
+  });
+
+  // 世界坐标 → 桩屏幕坐标（800×600）
+  function clientFor(camera: ReturnType<typeof makeCamera>, world: Vector3) {
+    const v = world.clone().project(camera);
+    return { clientX: ((v.x + 1) / 2) * 800, clientY: ((-v.y + 1) / 2) * 600, pointerId: 1 };
+  }
+
+  it('轴箭头：拖 X 箭头只沿 X 移动（垂直屏幕位移不产生 y/z 分量）', () => {
+    const camera = makeCamera(); // (0,0,5) 朝 -Z 看原点
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    t.setSelected(true); // 箭头只在选中后显示（Maya 同款）
+    // 点 X 箭头中点 (0.6,0,0) 的屏幕位置 → 轴拖拽（t0=0.6）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    // 拖到 (1.0,0.5,0) 的屏幕位置：垂直分量被投影掉，只剩 X 位移
+    // （透视下射线相对 X 轴的最近参量略小于 1.0，t 容差放宽；语义由 y/z 精确为零背书）
+    dom.fire('pointermove', clientFor(camera, new Vector3(1.0, 0.5, 0)));
+    expect(t.position.x).toBeCloseTo(0.4, 1);
+    expect(Math.abs(t.position.y)).toBeLessThan(1e-6);
+    expect(Math.abs(t.position.z)).toBeLessThan(1e-6);
+    dom.fire('pointerup', {});
+  });
+
+  it('轴箭头：箭头根部让位中心球；中心球仍走屏幕平面自由拖', () => {
+    const camera = makeCamera();
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    t.setSelected(true);
+    // 点箭头根部 (0.1,0,0)（< 0.25 杆长）：不算轴命中；距球心 0.1 超出球容差 → 不触发
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.1, 0, 0)));
+    expect(t.isDragging).toBe(false);
+    // 点中心球 → 自由拖
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    dom.fire('pointermove', clientFor(camera, new Vector3(0.3, 0.4, 0)));
+    expect(t.position.x).toBeCloseTo(0.3, 5);
+    expect(t.position.y).toBeCloseTo(0.4, 5);
+    dom.fire('pointerup', {});
+  });
+
+  it('轴箭头命中区 = 视觉杆长（updateFrame 缩放含 arrowLen，命中不再乘一次）', () => {
+    const camera = makeCamera(); // (0,0,5) 朝 -Z 看原点，球在 dist=5
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 0.5); // arrowLen ≠ 1：旧 bug（命中长度 = arrowLen² × dist/REF）只有此时现形
+    t.setSelected(true);
+    t.updateFrame(); // 组缩放 = 0.5 × 5/3.5 ≈ 0.714 = 视觉杆长（单位几何总长 1）
+    // 点杆 70% 处 (0.5,0,0)：在视觉杆上，必须命中（旧 bug 命中区只到 0.41，此处脱靶）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.5, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    dom.fire('pointerup', {});
+  });
+
+  it('轴箭头高亮：hover 变色、移开恢复、拖拽期间保持、抬起复位', () => {
+    const camera = makeCamera();
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    t.setSelected(true);
+    // 读实例级箭头材质（私有字段，测试经箭头组子节点取 shaft 材质）
+    const matOf = (i: number) => {
+      const g = (t as unknown as { arrows: { group: Object3D } }).arrows.group;
+      const arrow = g.children[i] as Object3D;
+      return (arrow.children[0] as unknown as { material: { color: { getHex(): number } } }).material;
+    };
+    const baseX = matOf(0).color.getHex();
+    const baseY = matOf(1).color.getHex();
+    // hover X 杆 → X 变色，Y 不变
+    dom.fire('pointermove', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(matOf(0).color.getHex()).not.toBe(baseX);
+    expect(matOf(1).color.getHex()).toBe(baseY);
+    // 移到无箭头处 → 恢复
+    dom.fire('pointermove', clientFor(camera, new Vector3(-0.4, 0.9, 0)));
+    expect(matOf(0).color.getHex()).toBe(baseX);
+    // 拖 X 轴期间保持高亮（指针已不在杆上也保持）
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    dom.fire('pointermove', clientFor(camera, new Vector3(1.0, 0.5, 0)));
+    expect(matOf(0).color.getHex()).not.toBe(baseX);
+    // 抬起复位
+    dom.fire('pointerup', {});
+    expect(matOf(0).color.getHex()).toBe(baseX);
+  });
+
+  it('轴箭头随球显隐（rotate 模式隐藏后不可命中）', () => {
+    const camera = makeCamera();
+    const dom = makeDomStub();
+    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
+    t.setAxisHandles(true, 1);
+    t.setSelected(true);
+    t.setVisible(false);
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(t.isDragging).toBe(false);
+    t.setVisible(true);
+    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    expect(t.isDragging).toBe(true);
+    dom.fire('pointerup', {});
   });
 });

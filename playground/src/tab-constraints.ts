@@ -7,7 +7,7 @@ import {
   type AimConfig,
   type CopyTransformConfig,
 } from 'threeik';
-import { loadSoldier, type LoadedCharacter } from './character';
+import { loadCharacter, type LoadedCharacter } from './character';
 import { DragTarget } from 'threeik/controls';
 import { measureChain } from 'threeik/controls';
 import type { TabHandle, PlaygroundContext } from './main';
@@ -20,7 +20,7 @@ export function createConstraintsTab(ctx: PlaygroundContext): TabHandle {
 
   return {
     async mount() {
-      character = await loadSoldier(ctx.scene);
+      character = await loadCharacter(ctx.scene);
       const rig = character.rig;
 
       // Aim 目标球：未拖拽时自动绕圈，拖拽时由用户控制

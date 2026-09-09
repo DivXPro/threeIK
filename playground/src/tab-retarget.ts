@@ -1,6 +1,6 @@
 import GUI from 'lil-gui';
 import { RetargetModifier } from 'threeik';
-import { loadSoldier, type LoadedCharacter } from './character';
+import { loadCharacter, type LoadedCharacter } from './character';
 import { buildMannequin } from './mannequin';
 import type { TabHandle, PlaygroundContext } from './main';
 
@@ -13,8 +13,8 @@ export function createRetargetTab(ctx: PlaygroundContext): TabHandle {
 
   return {
     async mount() {
-      character = await loadSoldier(ctx.scene);
-      character.actions.get('Walk')!.play();
+      character = await loadCharacter(ctx.scene);
+      character.actions.get('walk')!.play();
 
       mannequin = buildMannequin(1.4);
       mannequin.root.position.set(1.2, 0, 0);

@@ -1,15 +1,16 @@
 import { Camera, Object3D, Vector3 } from 'three';
 import { SkeletonRig } from '../core/skeleton-rig';
 import { ThreeIKError } from '../core/errors';
-import { DragTarget, type DragControl, type DragDom } from './drag-target';
+import { DragTarget, type DragControl, type DragDom, type DragPointerEvent } from './drag-target';
 import { resolveCustomControlKind } from './registry';
 import { buildRootControl, type RootControlSpec } from './kinds/root';
 import { buildLimbControl, type LimbControlSpec } from './kinds/limb';
 import { buildLookAtControl, type LookAtControlSpec } from './kinds/look-at';
 import { buildChainControl, type ChainControlSpec } from './kinds/chain';
-import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase } from './types';
+import { buildBoneControl, type BoneControlSpec } from './kinds/bone';
+import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ManipulatorMode } from './types';
 
-export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec;
+export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec | BoneControlSpec;
 /** 声明式控制点：内置 4 种 + registerControlKind 注册的自定义 kind */
 export type ControlPointSpec = BuiltinControlSpec | (ControlSpecBase & { kind: string });
 
@@ -33,20 +34,36 @@ const BUILTINS: Record<string, ControlKindFactory> = {
   limb: buildLimbControl as ControlKindFactory,
   lookAt: buildLookAtControl as ControlKindFactory,
   chain: buildChainControl as ControlKindFactory,
+  bone: buildBoneControl as ControlKindFactory,
 };
+
+/** 空白按下的「点击」位移容差（px²）：超过即视为拖拽（转视角等），不触发失焦 */
+const BLUR_CLICK_SLOP_SQ = 4 * 4;
 
 /**
  * 骨架控制点装配器：声明式挂一整套拖球 + modifier，并把三条实测结论固化在流程里——
  *  1. modifier 按根骨在骨架中的深度排序（hips 搬全身最先解；spine 动肩膀必须先于手臂；
  *     同深度保持声明顺序）
  *  2. 装配时内部先跑一帧 rig.update(0)，钳制锚点/携带偏移/poleDirection 都按求解后姿势捕获
- *  3. limb 的 roll 修正实测（poleDirection:'auto'）与伸展舵控（steer:true）是声明开关
+ *  3. limb 的 roll 修正实测（poleDirection:'auto'）是声明开关；pole 是 Maya 式 pole vector——
+ *     只管肘/膝朝向不管弯度（弯度由端球离根远近决定）；操纵器为轨道球（定长绕链轴转），
+ *     纯位置控制点，不参与 W/E 切换
  *
- * 应用侧每帧：`rig.update(dt)` 之后调 `ctl.update()`（携带 → 舵控 → 引导线）。
+ * 应用侧每帧：`rig.update(dt)` 之后调 `ctl.update()`（携带 → 环跟随 → 引导线）。
  */
 export class SkeletonControls {
   private readonly controls = new Map<string, BuiltControl>();
   private readonly ctx: ControlBuildContext;
+  private manipulatorMode: ManipulatorMode = 'move';
+  private selectedName: string | null = null;
+  /** 本轮 pointerdown 有操纵器 onPress 认领（选中/拖拽）；点空白失焦的判定标记 */
+  private pressClaimed = false;
+  /** 空白处按下的待定失焦：按下记位置，移动超阈值取消（那是在转视角），原地松开才失焦 */
+  private pendingBlur: { x: number; y: number } | null = null;
+  private readonly dom: DragDom;
+  private readonly onDomPointerDown: (e: DragPointerEvent) => void;
+  private readonly onDomPointerMove: (e: DragPointerEvent) => void;
+  private readonly onDomPointerUp: () => void;
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
@@ -58,11 +75,13 @@ export class SkeletonControls {
       dragControl: options.dragControl,
       facing: (options.facing ?? new Vector3(0, 0, -1)).clone().normalize(),
       defaults: {
-        reachScale: 1, poleKeepAlive: 0.96, poleRadius: 0.2, poleAngleDeg: 100,
-        lookAtRadius: 0.35, lookAtAngleDeg: 105, rootRadius: 0.4, ballRadius: 0.0225,
+        reachScale: 1, poleKeepAlive: 1,
+        lookAtRadius: 0.35, lookAtAngleDeg: 105, rootRadius: 0.4, ballRadius: 0.0225, ringRadius: 0.16,
         ...options.defaults,
       },
       bone: (name) => rig.getBoneAt(rig.boneIndex(name)),
+      select: (name) => { this.pressClaimed = true; this.select(name); },
+      claim: () => { this.pressClaimed = true; },
     };
 
     const built = options.controls.map((spec) => this.buildControl(spec));
@@ -77,6 +96,30 @@ export class SkeletonControls {
     // 否则携带偏移按 rest 捕获，姿势变化后球被甩飞
     rig.update(0);
     for (const c of built) c.postSolve();
+
+    // 点空白失焦（松开时判定）：pointerdown 监听器在全部操纵器之后注册（同一 dom 按注册
+    // 顺序运行），轮到它时本轮事件若无任何操纵器 onPress 认领，即按在空白处——记下待定失焦；
+    // 之后拖动超阈值（那是在转视角等）取消待定，原地松开才真正失焦。
+    // 三类操纵器（DragTarget/PoleOrbit/RotateRings）命中时都会先调 onPress，无需逐个查拖拽态
+    this.dom = options.dom;
+    this.onDomPointerDown = (e) => {
+      if (this.pressClaimed) { this.pressClaimed = false; this.pendingBlur = null; return; }
+      this.pendingBlur = { x: e.clientX, y: e.clientY };
+    };
+    this.onDomPointerMove = (e) => {
+      if (!this.pendingBlur) return;
+      const dx = e.clientX - this.pendingBlur.x;
+      const dy = e.clientY - this.pendingBlur.y;
+      if (dx * dx + dy * dy > BLUR_CLICK_SLOP_SQ) this.pendingBlur = null;
+    };
+    this.onDomPointerUp = () => {
+      if (!this.pendingBlur) return;
+      this.pendingBlur = null;
+      this.select(null);
+    };
+    this.dom.addEventListener('pointerdown', this.onDomPointerDown);
+    this.dom.addEventListener('pointermove', this.onDomPointerMove);
+    this.dom.addEventListener('pointerup', this.onDomPointerUp);
   }
 
   /** 取参数调节句柄（按声明时的 name）；泛型收窄到具体句柄类型 */
@@ -104,22 +147,103 @@ export class SkeletonControls {
     for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
     c.dispose();
     this.controls.delete(name);
+    if (this.selectedName === name || this.selectedName?.startsWith(name + ':')) this.selectedName = null;
   }
 
-  /** 每帧调用（rig.update 之后）：携带跟随 → steer 舵控 → 引导线 */
+  /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 → 操纵器屏幕恒定大小 */
   update(): void {
     for (const c of this.controls.values()) {
       for (const t of c.targets) t.carryAlong();
       c.update?.();
+      for (const t of c.targets) t.updateFrame();
     }
   }
 
   dispose(): void {
+    this.dom.removeEventListener('pointerdown', this.onDomPointerDown);
+    this.dom.removeEventListener('pointermove', this.onDomPointerMove);
+    this.dom.removeEventListener('pointerup', this.onDomPointerUp);
+    this.pendingBlur = null;
     for (const c of this.controls.values()) {
       for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
       c.dispose();
     }
     this.controls.clear();
+  }
+
+  /** 操纵器模式切换（Maya W/E）：move = 位置球，rotate = 旋转环。
+   *  双通道控制点的球在 rotate 模式变成可点标记（选中用）；纯位置控制点两种模式下都保持可拖 */
+  setManipulatorMode(mode: ManipulatorMode): void {
+    if (this.manipulatorMode === mode) return;
+    this.manipulatorMode = mode;
+    for (const c of this.controls.values()) this.applyView(c);
+  }
+
+  getManipulatorMode(): ManipulatorMode {
+    return this.manipulatorMode;
+  }
+
+  /** 选中控制点（Maya 同款：只有选中的显示操纵器——move 模式显轴箭头、rotate 模式显旋转环）；
+   *  传 null 取消选中。操纵器的 onPress 会自动调它（点哪个选中哪个）。
+   *  支持子选中（`'name:sub'`）：limb 的肘/膝是独立选中目标（点 pole 球选中它），
+   *  子选中时该子环组上场、主环收起，互不干扰 */
+  select(name: string | null): void {
+    if (name !== null) {
+      const sep = name.indexOf(':');
+      const main = sep < 0 ? name : name.slice(0, sep);
+      const sub = sep < 0 ? null : name.slice(sep + 1);
+      const c = this.controls.get(main);
+      if (!c) return;
+      if (sub !== null && !c.subRingGroups?.some((g) => g.key === sub)) return;
+    }
+    if (this.selectedName === name) return;
+    this.selectedName = name;
+    for (const c of this.controls.values()) this.applyView(c);
+  }
+
+  getSelected(): string | null {
+    return this.selectedName;
+  }
+
+  /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）；
+   *  子环组（肘/膝）跟随子选中（`name:sub`），与主环互斥；
+   *  纯旋转控制点（rotationOnly，W 模式无操纵器可显示）选中即出环，不看 W/E */
+  private applyView(c: BuiltControl): void {
+    const move = this.manipulatorMode === 'move';
+    const selected = this.selectedName === c.name;
+    const subSelected = this.selectedName?.startsWith(c.name + ':')
+      ? this.selectedName.slice(c.name.length + 1)
+      : null;
+    const hasRings = !!c.rotateRings?.length || !!c.subRingGroups?.length;
+    for (const t of c.moveTargets ?? c.targets) {
+      t.setVisible(true);
+      t.setInteractive(true);
+      // rotate 模式下双通道球退化成可点标记（选中入口，不可拖）；纯位置控制点不受模式影响
+      t.setMarkerMode(!move && hasRings);
+      t.setSelected(move && selected); // 轴箭头：move 模式 + 选中
+    }
+    // 常驻标记球（不在 moveTargets 里的，如 bone/肩髋标记）：选中高亮，不看模式——
+    // 纯旋转控制点在 W 模式点击的唯一即时反馈。kind 自己管理子选中标记的（limb 肩髋球），
+    // 由后面的 onSelectionChange 覆盖（顺序保证后者生效）
+    const moveSet = new Set(c.moveTargets ?? c.targets);
+    for (const t of c.targets) {
+      if (!moveSet.has(t)) t.setSelected(selected);
+    }
+    for (const r of c.rotateRings ?? []) {
+      // 旋转环：选中 + rotate 模式；纯旋转控制点（W 模式没有别的操纵器）选中即出环不看 W/E
+      const show = selected && (!move || !!c.rotationOnly);
+      r.setInteractive(show);
+      r.setVisible(show);
+    }
+    for (const g of c.subRingGroups ?? []) {
+      const show = subSelected === g.key && (!move || !!g.rotationOnly); // 子环组：同上
+      for (const r of g.rings) {
+        r.setInteractive(show);
+        r.setVisible(show);
+      }
+    }
+    c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球换班）
+    c.onSelectionChange?.(subSelected); // 子选中钩子（pole 球轴箭头等）
   }
 
   private buildControl(spec: ControlPointSpec): BuiltControl {
@@ -132,6 +256,7 @@ export class SkeletonControls {
     }
     const c = factory(this.ctx, spec);
     this.controls.set(spec.name, c);
+    this.applyView(c);
     return c;
   }
 

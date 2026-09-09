@@ -2,17 +2,16 @@ import { Bone, Camera, Object3D, Vector3 } from 'three';
 import type { SkeletonRig } from '../core/skeleton-rig';
 import type { Modifier } from '../modifiers/modifier';
 import type { DragControl, DragDom, DragTarget } from './drag-target';
+import type { RotateRings } from './rotate-rings';
 
 /** 全局默认钳制参数（spec 逐项覆盖；均为装配后可经句柄继续调节的初值） */
 export interface ControlsDefaults {
   /** 位置球可达半径倍率，默认 1 */
   reachScale?: number;
-  /** 带 pole 双骨链（四肢）的伸展上限：完全伸直时 pole 几何失效，96% 处留回旋空间让 pole 永远活着 */
+  /** 带 pole 双骨链（四肢）的伸展上限倍率，默认 1（不收缩）：PoleOrbit 恒把 pole 球钉在
+   *  ⊥ 链轴的轨道上，完全伸直时 roll 修正仍能把肘/膝方向带过退化点（实测弯→伸→弯稳定）；
+   *  <1 则永远保留一点弯度（0.96 会在短骨链上摆出肉眼可见的 15°+ 上臂/大腿摆角，慎用） */
   poleKeepAlive?: number;
-  /** pole 球恒距半径（锥 min=max），默认 0.2 */
-  poleRadius?: number;
-  /** pole 方向锥半角（°），默认 100 */
-  poleAngleDeg?: number;
   /** 注视球恒距半径，默认 0.35（下限 0.3：CCD 端骨离颈 ~0.12m，再近注视退化成摆放端骨） */
   lookAtRadius?: number;
   /** 注视方向锥半角（°），默认 105 */
@@ -21,6 +20,8 @@ export interface ControlsDefaults {
   rootRadius?: number;
   /** 拖球视觉半径，默认 0.0225 */
   ballRadius?: number;
+  /** 旋转环半径（世界坐标），默认 0.16 */
+  ringRadius?: number;
 }
 
 export type ResolvedDefaults = Required<ControlsDefaults>;
@@ -51,7 +52,16 @@ export interface ControlBuildContext {
   defaults: ResolvedDefaults;
   /** 按名取骨（找不到抛 BONE_NOT_FOUND） */
   bone(name: string): Bone;
+  /** 选中机制（Maya 同款：只有选中的控制点显示操纵器）：kind 把每个操纵器的 onPress 挂到这里 */
+  select(name: string): void;
+  /** 只认领按下、不改选中（空白失焦判定用）：「不该点亮任何控制点」的常驻操纵器 onPress 挂这里——
+   *  点它若选中某个控制点，会让用户误以为选中了它（内置 kind 已无用例，保留给自定义 kind） */
+  claim(): void;
 }
+
+/** 操纵器模式（Maya W/E）：move = 位置球，rotate = 旋转环（仅双通道控制点响应切换；
+ *  纯旋转控制点（rotationOnly）W 模式没有操纵器可显示，选中即出环不看模式） */
+export type ManipulatorMode = 'move' | 'rotate';
 
 /** kind 工厂产物：装配器据此做 modifier 深度排序、首解、逐帧更新与清理 */
 export interface BuiltControl {
@@ -59,11 +69,28 @@ export interface BuiltControl {
   readonly kind: string;
   /** 全部拖球（ctl.update 里统一 carryAlong） */
   readonly targets: DragTarget[];
+  /** 旋转环（双通道控制点；装配器按操纵器模式切换 球↔环 的显示与交互） */
+  readonly rotateRings?: RotateRings[];
+  /** 纯旋转控制点（如 bone 掰骨：W 模式没有可显示的操纵器）：rotateRings 选中即出环，
+   *  不看 W/E——W/E 只对双通道控制点有意义。缺省 false（双通道：环只在 E 模式上场） */
+  readonly rotationOnly?: boolean;
+  /** 子选中环组（如 limb 的肘/膝环）：与主 rotateRings 互斥——选中 `${name}:${key}` 时该组上场、
+   *  主环收起；选中主名（name）时反之。让肘/膝成为独立选中目标：点 pole 球 = 选中肘部。
+   *  rotationOnly 同上：肩/髋根环这类 W 模式无操纵器的纯旋转子目标，选中即出环不看 W/E */
+  readonly subRingGroups?: { key: string; rings: RotateRings[]; rotationOnly?: boolean }[];
+  /** 参与 move 模式切换的球（缺省 = targets） */
+  readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */
   readonly modifiers: { modifier: Modifier; rootBone: string }[];
+  /** 操纵器模式（W/E）切换钩子：不进 targets/rotateRings 体系的操纵器（如肘环↔pole 球换班）
+   *  在此自行切显隐与交互；装配器在 build/select/setManipulatorMode 时逐个调用 */
+  onModeChange?(mode: ManipulatorMode): void;
+  /** 子选中变化钩子：subKey = 当前选中的子目标（`name:sub` 的 sub；主选中/未选中都为 null）。
+   *  装配器在 select/setManipulatorMode 时逐个调用（如 limb 据此开关 pole 球的轴箭头） */
+  onSelectionChange?(subKey: string | null): void;
   /** 首解（rig.update(0)）之后调用：设钳制、捕获携带偏移、实测 poleDirection */
   postSolve(): void;
-  /** 每帧调用（carryAlong 之后）：steer 舵控、引导线等 */
+  /** 每帧调用（carryAlong 之后）：环跟随、引导线等 */
   update?(): void;
   readonly handle: ControlHandleBase;
   /** 移除场景对象并释放资源（modifier 由装配器统一 removeModifier） */
@@ -76,8 +103,8 @@ export type ControlKindFactory<S extends ControlSpecBase = ControlSpecBase> = (c
 export interface ControlHandleBase {
   readonly name: string;
   readonly kind: string;
-  /** 主拖球（kind 副球见各具体句柄，如 limb 的 pole） */
-  readonly target: DragTarget;
+  /** 主拖球（旋转专用的 bone 控制点没有；kind 副操纵器见各具体句柄，如 limb 的 pole） */
+  readonly target?: DragTarget;
   /** 求解器逃生口：active/influence/迭代参数等直接调 */
   readonly modifier: Modifier;
   setActive(active: boolean): void;

@@ -84,10 +84,10 @@ const _midQ = new Quaternion();
 const _m = new Matrix4();
 const _v1 = new Vector3();
 const _v2 = new Vector3();
-// 肘环拖拽快照（pointerdown 捕获，拖拽全程有效）：拖前肘位置与前臂向量
+// 肘环拖拽快照（TC mouseDown 时捕获，拖拽全程有效）：拖前肘位置与前臂向量
 const _elbow0 = new Vector3();
 const _fore0 = new Vector3();
-// 根关节环拖拽快照（pointerdown 捕获）：拖前根/肘/手位置（刚体旋转的三点基准）
+// 根关节环拖拽快照（TC mouseDown 时捕获）：拖前根/肘/手位置（刚体旋转的三点基准）
 const _sRoot0 = new Vector3();
 const _sElbow0 = new Vector3();
 const _sHand0 = new Vector3();
@@ -125,10 +125,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   // 肘/膝二维旋转环（E 模式 + 选中时上场，与端骨环同走 rotateRings 选中体系）：
   // X 环 = 前臂/小腿绕自身纵轴扭转（RollModifier 施加，位置全不动），Y 环 = 绕弯折轴伸缩
-  // （增量模式：拖环不改写环自身朝向，累计角交给下面的 onRotateDrag）
-  const elbowRings = new RotateRings(ctx.camera, ctx.dom, {
+  // （增量模式：TC 转出的 proxy 朝向只作拖拽反馈，累计角交给下面的 onDragDelta）
+  const elbowRings = new RotateRings({
     ringRadius: spec.pole?.ringRadius ?? ctx.defaults.ringRadius,
-    dragControl: ctx.dragControl,
     rings: [0, 1],
     viewRing: false,
   });
@@ -136,11 +135,10 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   // 扭转通道的滚转落点（RollModifier 实例在下方 modifiers 数组声明后注册）：
   // TwoBone 把中骨朝向整体重写，附加滚转必须求解后重新施加
   let rollAngle = 0; // 持久扭转角（控制层持有，每帧由 rollModifier 重放）
-  let rollBase = 0;  // 本次拖拽起始角（onPress 捕获，拖环 = rollBase + 累计角）
-  // 拖拽快照（pointerdown 时捕获）：累计角 × 拖前前臂 = 累计旋转——同一帧连发多个 move、
-  // 求解器还没跑（骨骼位置未更新）时，逐事件读骨骼会丢旋转，快照×累计角恒正确
-  elbowRings.onPress = () => {
-    ctx.select(`${spec.name}:elbow`); // 与 pole 球同一个选中目标：点肘环 = 选中肘部
+  let rollBase = 0;  // 本次拖拽起始角（onDragStart 捕获，拖环 = rollBase + 累计角）
+  // 拖拽快照（TC mouseDown 时捕获，拖拽全程有效）：累计角 × 拖前前臂 = 累计旋转——同一帧连发多个
+  // objectChange、求解器还没跑（骨骼位置未更新）时，逐次读骨骼会丢旋转，快照×累计角恒正确
+  elbowRings.onDragStart = () => {
     rollBase = rollAngle;
     midObj.getWorldPosition(_elbow0);
     endObj.getWorldPosition(_fore0).sub(_elbow0);
@@ -159,10 +157,9 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   const rollModifier = new RollModifier([{ applyBone: spec.middleBone, childBone: spec.endBone }]);
   modifiers.push({ modifier: rollModifier, rootBone: spec.middleBone });
   if (spec.endRotation) {
-    rings = new RotateRings(ctx.camera, ctx.dom, { ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius, dragControl: ctx.dragControl });
+    rings = new RotateRings({ ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius });
     rings.setJoint(endObj);
     rings.setOrientationCarry(endObj.parent ?? midObj); // FK 语义：端骨朝向相对中骨携带（弯肘/膝时腕/脚尖跟着相对转）
-    rings.onPress = () => ctx.select(spec.name);
     ctx.scene.add(rings);
     // rootBone=端骨（链上最深）：深度排序保证定向在链 IK 摆位之后执行
     modifiers.push({
@@ -241,10 +238,10 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
   // 肘环增量通道（axisIndex：0 = twist 绕前臂轴，1 = bend 绕弯折轴；angle = 按下以来的累计角，
   // axisWorld = 过肘的冻结拖轴）——
   //  twist：前臂/小腿绕自身纵轴滚转（RollModifier 重放持久角），手/脚位置、肘/膝、上臂/大腿全不动；
-  //  bend：拖前前臂（onPress 快照）绕弯折轴转 angle，端球搬到弧上的新位置——纯关节 FK，肘/肩
+  //  bend：拖前前臂（onDragStart 快照）绕弯折轴转 angle，端球搬到弧上的新位置——纯关节 FK，肘/肩
   //  全程不动，旋转保距（新链距恒 ≤ len1+len2）下一帧 TwoBone 复核自然可达。pole 方向随后按
   //  真相重同步：弯时贴肘真实离轴方向（肘没动，求解器把它留在原地，防残差漂移）
-  elbowRings.onRotateDrag = (axisIndex, angle, axisWorld) => {
+  elbowRings.onDragDelta = (axisIndex, angle, axisWorld) => {
     if (axisIndex === 0) {
       rollAngle = rollBase + angle;
       rollModifier.setAngle(0, rollAngle);
@@ -278,14 +275,14 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     shoulderMarker.onPress = () => ctx.select(`${spec.name}:root`);
     ctx.scene.add(shoulderMarker);
 
-    shoulderRings = new RotateRings(ctx.camera, ctx.dom, {
+    shoulderRings = new RotateRings({
       ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius,
-      dragControl: ctx.dragControl,
       viewRing: false,
     });
     shoulderRings.setJoint(rootObj);
-    shoulderRings.onPress = () => {
-      ctx.select(`${spec.name}:root`);
+    // 拖拽快照（TC mouseDown 时捕获）：拖前根/肘/手三点（刚体旋转基准）+ pole 偏好方向。
+    // 选中入口是常驻肩/髋标记球，环被拖说明已选中
+    shoulderRings.onDragStart = () => {
       rootObj.getWorldPosition(_sRoot0);
       midObj.getWorldPosition(_sElbow0);
       endObj.getWorldPosition(_sHand0);
@@ -334,7 +331,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     // 两段骨长、弯度、链距全保；端球搬到 H'，pole 偏好方向同转 q 后去轴重定向。
     // （弯臂时 rot(pole0) 去轴 ≡ E' 去轴——旋转保点积；直臂时 E' 离轴分量为零、只有 pole
     //  旋转生效：TwoBone 按 pole 方向让整链绕链轴滚 = 大臂/大腿扭转，肘/膝折痕转向）
-    shoulderRings.onRotateDrag = (_axisIndex, angle, axisWorld) => {
+    shoulderRings.onDragDelta = (_axisIndex, angle, axisWorld) => {
       _q0.setFromAxisAngle(axisWorld, angle);
       _midPos.copy(_sElbow0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0); // E'
       _endPos.copy(_sHand0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0);   // H'

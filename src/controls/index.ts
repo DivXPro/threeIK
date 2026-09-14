@@ -6,9 +6,13 @@ export { measureChain } from './measure-chain';
 export { SkeletonControls, createSkeletonControls } from './skeleton-controls';
 export type { SkeletonControlsOptions, ControlPointSpec, BuiltinControlSpec } from './skeleton-controls';
 export { registerControlKind } from './registry';
+export { TransformControlsDriver } from './transform-controls-driver';
 export type {
   ControlBuildContext, BuiltControl, ControlKindFactory, ControlsDefaults, ControlSpecBase, ControlHandleBase, HotkeyEvent, HotkeyMap, HotkeyTarget, ManipulatorMode,
+  ManipulatorDriver, ManipulatorAttachOptions, ExternalDraggable,
 } from './types';
+export { DEFAULT_BALL_RADIUS } from './drag-target';
+export { DEFAULT_RING_RADIUS } from './rotate-rings';
 export type { RootControlSpec, RootControlHandle } from './kinds/root';
 export type { LimbControlSpec, LimbPoleSpec, LimbControlHandle } from './kinds/limb';
 export type { LookAtControlSpec, LookAtControlHandle } from './kinds/look-at';

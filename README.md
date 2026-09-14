@@ -115,7 +115,33 @@ ctl.update(); // 携带 → 环跟随 → 引导线 → 操纵器屏幕恒定大
 
 ### 操纵器模式与选中
 
-Maya 式 W/E：`ctl.setManipulatorMode('move' | 'rotate')`——W = 位置球 + 轴箭头，E = 旋转环；双通道控制点的球在 E 退化为可点标记（大小不变，只切可拖性）。选中机制：只有选中的控制点显示操纵器，点操纵器自动选中，点空白失焦。子选中（`'armL:elbow'` / `'armL:root'`）让肘部/肩部成为独立选中目标。纯旋转控制点（bone、肩/髋根环）选中即出环，不看 W/E。
+Maya 式 W/E：`ctl.setManipulatorMode('move' | 'rotate')`——移动/旋转操纵器由 three.js TransformControls 提供，W = 位置球 + 移动 gizmo，E = 旋转环；双通道控制点的球在 E 退化为可点标记（大小不变，只切可拖性）。选中机制：只有选中的控制点显示操纵器，点操纵器自动选中，点空白失焦。子选中（`'armL:elbow'` / `'armL:root'`）让肘部/肩部成为独立选中目标。纯旋转控制点（bone、肩/髋根环）选中即出环，不看 W/E。
+
+默认操纵器是 `TransformControlsDriver`；想接自研 gizmo 可在 `createSkeletonControls` 传 `manipulator: ManipulatorDriver` 注入自定义驱动——装配器只依赖 `ManipulatorDriver` 接口（`setMode`/`attach`/`onDragStart`/`onDragChange`/`onDragEnd`/`dispose`），实现可整体替换。模式切换可经 `onManipulatorModeChange?: (mode) => void` 订阅（如 GUI 下拉框随键盘同步）。
+
+### 快捷键
+
+装配器内置 Maya 式快捷键：W 切 move、E 切 rotate、Escape 取消选中，默认绑在 `window` 上。可整体覆盖或关闭：
+
+```ts
+const ctl = createSkeletonControls({
+  // ...
+  // 数组 = 一个动作绑多键；缺省字段回落默认表；某动作传空数组 = 禁用该动作
+  hotkeys: { move: ['w', 'W'], rotate: 'e', deselect: ['Escape'] },
+  hotkeyTarget: someElement,   // 限定监听范围（iframe / 自绘 UI）；缺省 window
+});
+
+ctl.setHotkeys({ rotate: [] }); // 运行期换绑
+ctl.setHotkeys(false);          // 完全自绑出口：卸下全部监听，自行调 setManipulatorMode / 取消选中
+```
+
+### Breaking：0.0.x 操纵器换芯（TransformControls）
+
+0.0.x 迭代中操纵器层迁移到 three.js TransformControls，以下旧 API 已变更：
+
+- `DragTarget.setAxisHandles` / `PoleOrbit.setAxisHandles` 删除——轴箭头由 TransformControls 移动 gizmo 取代；
+- `RotateRings` 构造签名变化：不再接收 `camera`/`dom`，只保留 `rings`/`ringRadius`/`viewRing` 等环自身参数；渲染相关方法 `setInteractive`/`setVisible` 与 `depthUniforms` 成员删除——显隐与交互由装配器统一管理；
+- `RotateRings.onRotateDrag` 改名 `onDragDelta`，按下快照从 `onPress` 挪到 `onDragStart`（kinds 在 `onDragStart` 捕获快照）。
 
 ### 颜色与外观
 

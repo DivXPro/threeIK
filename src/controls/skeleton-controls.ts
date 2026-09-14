@@ -8,7 +8,9 @@ import { buildLimbControl, type LimbControlSpec } from './kinds/limb';
 import { buildLookAtControl, type LookAtControlSpec } from './kinds/look-at';
 import { buildChainControl, type ChainControlSpec } from './kinds/chain';
 import { buildBoneControl, type BoneControlSpec } from './kinds/bone';
-import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ManipulatorMode } from './types';
+import { RotateRings } from './rotate-rings';
+import { TransformControlsDriver } from './transform-controls-driver';
+import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ExternalDraggable, ManipulatorDriver, ManipulatorMode } from './types';
 
 export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec | BoneControlSpec;
 /** 声明式控制点：内置 4 种 + registerControlKind 注册的自定义 kind */
@@ -27,6 +29,8 @@ export interface SkeletonControlsOptions {
   facing?: Vector3;
   defaults?: ControlsDefaults;
   controls: ControlPointSpec[];
+  /** 外部操纵器驱动（缺省内部构造 TransformControlsDriver；node 测试传 fake） */
+  manipulator?: ManipulatorDriver;
 }
 
 const BUILTINS: Record<string, ControlKindFactory> = {
@@ -61,6 +65,9 @@ export class SkeletonControls {
   /** 空白处按下的待定失焦：按下记位置，移动超阈值取消（那是在转视角），原地松开才失焦 */
   private pendingBlur: { x: number; y: number } | null = null;
   private readonly dom: DragDom;
+  private readonly driver: ManipulatorDriver;
+  /** 当前 attach 的操控对象（事件分派用）：proxy = 旋转环，draggable = 平移通道拖球 */
+  private currentManipulator: { draggable: ExternalDraggable; proxy?: undefined } | { proxy: RotateRings; draggable?: undefined } | null = null;
   private readonly onDomPointerDown: (e: DragPointerEvent) => void;
   private readonly onDomPointerMove: (e: DragPointerEvent) => void;
   private readonly onDomPointerUp: () => void;
@@ -83,6 +90,13 @@ export class SkeletonControls {
       select: (name) => { this.pressClaimed = true; this.select(name); },
       claim: () => { this.pressClaimed = true; },
     };
+
+    // 外部操纵器驱动在 buildControl 循环之前创建：TC 的 dom 指针监听要先于控制点操纵器
+    // 注册，保证同一轮 pointerdown 里 TC 认领（pressClaimed）先于装配器的空白失焦判定运行
+    this.driver = options.manipulator ?? new TransformControlsDriver(options.camera, options.scene, options.dom, options.dragControl);
+    this.driver.onDragStart = ({ axis }) => this.onManipulatorDragStart(axis);
+    this.driver.onDragChange = () => this.onManipulatorDragChange();
+    this.driver.onDragEnd = () => this.onManipulatorDragEnd();
 
     const built = options.controls.map((spec) => this.buildControl(spec));
     // 深度排序后统一 addModifier（sort 稳定，同深度保持声明顺序）
@@ -142,12 +156,13 @@ export class SkeletonControls {
   }
 
   remove(name: string): void {
+    // 先走 select(null)：内部 retarget 会 detach 挂在其对象上的外部操纵器，再dispose 场景对象
+    if (this.selectedName === name || this.selectedName?.startsWith(name + ':')) this.select(null);
     const c = this.controls.get(name);
     if (!c) return;
     for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
     c.dispose();
     this.controls.delete(name);
-    if (this.selectedName === name || this.selectedName?.startsWith(name + ':')) this.selectedName = null;
   }
 
   /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 */
@@ -163,6 +178,7 @@ export class SkeletonControls {
     this.dom.removeEventListener('pointermove', this.onDomPointerMove);
     this.dom.removeEventListener('pointerup', this.onDomPointerUp);
     this.pendingBlur = null;
+    this.driver.dispose();
     for (const c of this.controls.values()) {
       for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
       c.dispose();
@@ -176,6 +192,7 @@ export class SkeletonControls {
     if (this.manipulatorMode === mode) return;
     this.manipulatorMode = mode;
     for (const c of this.controls.values()) this.applyView(c);
+    this.retargetManipulator();
   }
 
   getManipulatorMode(): ManipulatorMode {
@@ -198,15 +215,15 @@ export class SkeletonControls {
     if (this.selectedName === name) return;
     this.selectedName = name;
     for (const c of this.controls.values()) this.applyView(c);
+    this.retargetManipulator();
   }
 
   getSelected(): string | null {
     return this.selectedName;
   }
 
-  /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），箭头/环 = 操纵器（仅选中显示）；
-   *  子环组（肘/膝）跟随子选中（`name:sub`），与主环互斥；
-   *  纯旋转控制点（rotationOnly，W 模式无操纵器可显示）选中即出环，不看 W/E */
+  /** 每个控制点的显隐规则：球/标记 = 控制对象（常显），选中高亮 = 标记变色；
+   *  环的 attach/detach 归 retargetManipulator（外部操纵器接管，本方法不再碰环） */
   private applyView(c: BuiltControl): void {
     const move = this.manipulatorMode === 'move';
     const selected = this.selectedName === c.name;
@@ -219,7 +236,7 @@ export class SkeletonControls {
       t.setInteractive(true);
       // rotate 模式下双通道球退化成可点标记（选中入口，不可拖）；纯位置控制点不受模式影响
       t.setMarkerMode(!move && hasRings);
-      t.setSelected(move && selected); // 轴箭头：move 模式 + 选中
+      t.setSelected(selected); // 只管标记高亮（选中变色），可拖性归 attach 路由
     }
     // 常驻标记球（不在 moveTargets 里的，如 bone/肩髋标记）：选中高亮，不看模式——
     // 纯旋转控制点在 W 模式点击的唯一即时反馈。kind 自己管理子选中标记的（limb 肩髋球），
@@ -228,21 +245,81 @@ export class SkeletonControls {
     for (const t of c.targets) {
       if (!moveSet.has(t)) t.setSelected(selected);
     }
-    for (const r of c.rotateRings ?? []) {
-      // 旋转环：选中 + rotate 模式；纯旋转控制点（W 模式没有别的操纵器）选中即出环不看 W/E
-      const show = selected && (!move || !!c.rotationOnly);
-      r.setInteractive(show);
-      r.setVisible(show);
-    }
-    for (const g of c.subRingGroups ?? []) {
-      const show = subSelected === g.key && (!move || !!g.rotationOnly); // 子环组：同上
-      for (const r of g.rings) {
-        r.setInteractive(show);
-        r.setVisible(show);
-      }
-    }
     c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球换班）
     c.onSelectionChange?.(subSelected); // 子选中钩子（pole 球轴箭头等）
+  }
+
+  /** 外部操纵器拖拽事件分派：按当前 attach 对象的类型走 proxy（旋转环）或 draggable（拖球）通道 */
+  private onManipulatorDragStart(axis: string | null): void {
+    this.pressClaimed = true; // 拖拽开始 = 本轮按下被认领（空白失焦防线）
+    const cur = this.currentManipulator;
+    if (!cur) return;
+    if (cur.proxy) {
+      const idx = axis === 'X' ? 0 : axis === 'Y' ? 1 : axis === 'Z' ? 2 : -1;
+      if (idx < 0 && cur.proxy.onDragDelta) return; // 增量环不认 E/XYZE（配置层已隐藏，防御）
+      cur.proxy.beginExternalDrag(idx);
+    } else {
+      cur.draggable.beginExternalDrag();
+    }
+  }
+
+  private onManipulatorDragChange(): void {
+    const cur = this.currentManipulator;
+    if (!cur) return;
+    if (cur.proxy) cur.proxy.updateExternalDrag();
+    else cur.draggable.reclamp();
+  }
+
+  private onManipulatorDragEnd(): void {
+    const cur = this.currentManipulator;
+    if (!cur) return;
+    if (cur.proxy) cur.proxy.endExternalDrag();
+    else cur.draggable.endExternalDrag();
+  }
+
+  /** 按 选中态 × 操纵器模式 重挂外部操纵器；球的高亮/marker 逻辑仍在 applyView */
+  private retargetManipulator(): void {
+    const sel = this.selectedName;
+    const c = sel ? this.controls.get(sel.split(':')[0]!) : undefined;
+    if (!sel || !c) { this.attachManipulator(null); return; }
+    const sub = sel.includes(':') ? sel.slice(sel.indexOf(':') + 1) : null;
+    const move = this.manipulatorMode === 'move';
+    if (sub !== null) {
+      const g = c.subRingGroups?.find((g) => g.key === sub);
+      if (g?.rings.length && (!move || !!g.rotationOnly)) { this.attachManipulator(g.rings[0]!); return; }
+      const sm = c.subMoveTargets?.find((s) => s.key === sub);
+      if (move && sm) { this.attachManipulator(sm.target); return; }
+      this.attachManipulator(null);
+      return;
+    }
+    const hasRings = !!c.rotateRings?.length;
+    if (hasRings && (!move || !!c.rotationOnly)) { this.attachManipulator(c.rotateRings![0]!); return; }
+    // move 模式的双通道/纯位置、rotate 模式的纯位置：平移通道（纯位置不受模式影响是现行为）
+    const t = (c.moveTargets ?? c.targets)[0] ?? c.targets[0];
+    this.attachManipulator(t ?? null);
+  }
+
+  /** obj 为 ExternalDraggable 或 RotateRings proxy；null = detach */
+  private attachManipulator(obj: ExternalDraggable | RotateRings | null): void {
+    // 旧对象让位标志复位
+    if (this.currentManipulator?.draggable && this.currentManipulator.draggable !== obj) {
+      this.currentManipulator.draggable.setExternalManipulator(false);
+    }
+    if (!obj) {
+      this.currentManipulator = null;
+      this.driver.attach(null);
+      return;
+    }
+    if (obj instanceof RotateRings) {
+      this.currentManipulator = { proxy: obj };
+      this.driver.setMode('rotate');
+      this.driver.attach(obj, { axes: obj.axisMask, viewRing: obj.viewRing, size: obj.manipulatorSize });
+      return;
+    }
+    this.currentManipulator = { draggable: obj };
+    obj.setExternalManipulator(true); // TC 接管期间自身拖拽让位（onPress 选中上报保留）
+    this.driver.setMode('move');
+    this.driver.attach(obj.dragObject, { size: obj.manipulatorSize });
   }
 
   private buildControl(spec: ControlPointSpec): BuiltControl {

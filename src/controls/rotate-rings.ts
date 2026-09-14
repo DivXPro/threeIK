@@ -178,16 +178,6 @@ export class RotateRings extends Object3D {
     }
   }
 
-  /** @deprecated 过渡兼容（attach 路由上线后移除）：显隐不再由本类控制 */
-  setVisible(v: boolean): void {
-    this.visible = v;
-  }
-
-  /** @deprecated 过渡兼容（attach 路由上线后移除）：交互归 TransformControls */
-  setInteractive(_v: boolean): void {
-    // no-op
-  }
-
   dispose(): void {
     this.dragging = false;
     this.removeFromParent();

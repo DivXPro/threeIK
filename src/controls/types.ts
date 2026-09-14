@@ -118,6 +118,8 @@ export interface BuiltControl {
    *  主环收起；选中主名（name）时反之。让肘/膝成为独立选中目标：点 pole 球 = 选中肘部。
    *  rotationOnly 同上：肩/髋根环这类 W 模式无操纵器的纯旋转子目标，选中即出环不看 W/E */
   readonly subRingGroups?: { key: string; rings: RotateRings[]; rotationOnly?: boolean }[];
+  /** 子选中目标的 move 通道挂载点（如 limb 肘部的 pole 球）：子选中 + move 模式时 attach 给它 */
+  readonly subMoveTargets?: { key: string; target: ExternalDraggable }[];
   /** 参与 move 模式切换的球（缺省 = targets） */
   readonly moveTargets?: DragTarget[];
   /** modifier + 排序锚骨（按该骨在骨架中的深度决定求解顺序，浅的先解） */

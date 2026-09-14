@@ -193,7 +193,16 @@ export class PoleOrbit extends Object3D implements ExternalDraggable {
     if (!this.frame(_center, _axis)) return;
     this.ball.getWorldPosition(_w).sub(_center);
     _w.addScaledVector(_axis, -_w.dot(_axis));
-    if (_w.lengthSq() < 1e-12) { this.place(); return; }
+    if (_w.lengthSq() < 1e-12) {
+      // 退化：球被 TC 直写到链轴上（径向意图归零，推直腿）——方向保持上次落位，半径写 0
+      this.orbitRadius = 0;
+      if (Math.abs(0 - this.lastDragRadius) > RADIUS_DRAG_DEADZONE) {
+        this.lastDragRadius = 0;
+        this.onRadiusDrag?.(0);
+      }
+      this.place();
+      return;
+    }
     const radius = _w.length();
     this.dir.copy(_w).divideScalar(radius);
     this.orbitRadius = radius;

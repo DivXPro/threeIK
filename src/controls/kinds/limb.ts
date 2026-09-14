@@ -368,6 +368,8 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       // 肩/髋根环是纯旋转子目标（W 模式无操纵器）：选中即出环不看 W/E
       ...(shoulderRings ? [{ key: 'root', rings: [shoulderRings], rotationOnly: true }] : []),
     ],
+    // 子选中的 move 通道挂载点：W 模式选中肘部时 attach pole 球（纯位置轨道球）
+    subMoveTargets: [{ key: 'elbow', target: pole }],
     modifiers,
     onModeChange(mode) {
       pole.setMarkerMode(mode === 'rotate');

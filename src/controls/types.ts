@@ -81,6 +81,28 @@ export interface ControlBuildContext {
  *  纯旋转控制点（rotationOnly）W 模式没有操纵器可显示，选中即出环不看模式） */
 export type ManipulatorMode = 'move' | 'rotate';
 
+/** attach 选项：外部操纵器按控制点语义裁剪 TC 通道 */
+export interface ManipulatorAttachOptions {
+  /** rotate 模式显示的轴环（缺省 [true, true, true]） */
+  axes?: [boolean, boolean, boolean];
+  /** rotate 模式视角环（TC 'E' 通道），缺省 true */
+  viewRing?: boolean;
+  /** gizmo 尺寸倍率（相对 TC 默认），缺省 1 */
+  size?: number;
+}
+
+/** 外部操纵器驱动接口：装配器只依赖它；生产实现 = TransformControlsDriver，node 测试传 fake */
+export interface ManipulatorDriver {
+  setMode(mode: ManipulatorMode): void;
+  attach(target: Object3D | null, options?: ManipulatorAttachOptions): void;
+  readonly attachedTo: Object3D | null;
+  /** TC mouseDown 翻译：axis = TC 命中通道（'X'|'Y'|'Z'|'E'|'XYZE'|…） */
+  onDragStart?: ((info: { axis: string | null }) => void) | null;
+  onDragChange?: (() => void) | null;
+  onDragEnd?: (() => void) | null;
+  dispose(): void;
+}
+
 /** kind 工厂产物：装配器据此做 modifier 深度排序、首解、逐帧更新与清理 */
 export interface BuiltControl {
   readonly name: string;

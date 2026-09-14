@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   sourcemap: true,
   clean: true,
-  external: ['three'],
+  external: [/^three/], // three 及其 examples/jsm 子路径都不打包（含 TransformControls）
 });

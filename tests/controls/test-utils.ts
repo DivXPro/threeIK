@@ -4,9 +4,13 @@ import type { DragDom, DragPointerEvent } from '../../src/controls/drag-target';
 /** DragDom 桩：记录监听器，可编程派发指针事件（默认指向 800×600 视口中心） */
 export function makeDomStub() {
   const listeners = new Map<string, Array<(e: DragPointerEvent) => void>>();
+  // TC（TransformControls）connect/拖拽路径需要的额外成员；DragDom 结构不变，仅测试桩补齐
   const stub: DragDom & {
     fire(type: string, e: Partial<DragPointerEvent>): void;
     listenerCount(type: string): number;
+    style: Record<string, string>;
+    ownerDocument: { pointerLockElement: unknown };
+    releasePointerCapture(pointerId: number): void;
   } = {
     addEventListener(type, fn) {
       const list = listeners.get(type) ?? [];
@@ -20,6 +24,11 @@ export function makeDomStub() {
     },
     setPointerCapture() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    // 以下三项 TransformControls 需要：connect 写 style.touchAction、拖拽路径读
+    // ownerDocument.pointerLockElement、pointerup 调 releasePointerCapture
+    style: {} as Record<string, string>,
+    ownerDocument: { pointerLockElement: null },
+    releasePointerCapture() {},
     fire(type, e) {
       for (const fn of listeners.get(type) ?? []) fn({ clientX: 400, clientY: 300, pointerId: 1, ...e });
     },

@@ -32,7 +32,6 @@ export function buildRootControl(ctx: ControlBuildContext, spec: RootControlSpec
   const bone = ctx.bone(spec.bone);
   const initial = spec.position ? toVec3(spec.position) : bone.getWorldPosition(new Vector3());
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xff3399, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
-  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球（选中后显示）
   target.onPress = () => ctx.select(spec.name);
   ctx.scene.add(target);
   const modifier = new RootMotionModifier(spec.bone, target);

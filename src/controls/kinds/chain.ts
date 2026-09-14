@@ -34,7 +34,6 @@ export function buildChainControl(ctx: ControlBuildContext, spec: ChainControlSp
   const endBoneObj = ctx.bone(spec.endBone);
   const initial = spec.position ? toVec3(spec.position) : endBoneObj.getWorldPosition(new Vector3());
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xcc66ff, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
-  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球
   target.onPress = () => ctx.select(spec.name);
   ctx.scene.add(target);
   const modifier = new FabrikModifier(

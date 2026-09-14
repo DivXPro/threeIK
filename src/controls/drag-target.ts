@@ -1,7 +1,10 @@
 import { Camera, MathUtils, Mesh, MeshBasicMaterial, Object3D, Plane, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
-import { AxisArrows, HIT_TOLERANCE_PER_METER, MANIPULATOR_REF_DIST, rayAxisClosest } from './axis-arrows';
+import type { ExternalDraggable } from './types';
 
-export { MANIPULATOR_REF_DIST };
+/** 命中容差（世界米/相机距离米）：raycast 缩小版球体容易脱靶（尤其触屏），按相机距离给射线余量 */
+const HIT_TOLERANCE_PER_METER = 0.011;
+/** 视觉球半径的类默认值（manipulatorSize 的基准；ControlsDefaults.ballRadius 缺省同值） */
+export const DEFAULT_BALL_RADIUS = 0.0225;
 
 /** 标记球选中高亮色（与操纵器 hover 高亮同色系：亮黄 = 「激活」） */
 export const MARKER_SELECTED_COLOR = 0xffee33;
@@ -41,7 +44,7 @@ export interface DragDom {
  * 可拖拽的 IK target 球：指针拖拽命中、约束钳制（可达球 / 方向锥）、锚点携带。
  * 挂在场景顶层（世界坐标定位）；约束与拖拽均在世界空间计算，写入时换算回父局部。
  */
-export class DragTarget extends Object3D {
+export class DragTarget extends Object3D implements ExternalDraggable {
   readonly ball: Mesh;
   /** 视觉球半径（拖拽命中在此基础上再加按相机距离换算的容差） */
   readonly ballRadius: number;
@@ -72,7 +75,7 @@ export class DragTarget extends Object3D {
   // 选中机制（Maya 同款：只有选中的控制点才显示操纵器）：
   // onPress = 任意命中按下时上报（装配器据此选中所属控制点）；
   // marker 模式 = 球显示但不可拖（rotate 模式下的可点标记），按下只触发 onPress；
-  // selected = 轴箭头显示的前提（arrowsOn && selected && 球可见）
+  // selected = 标记模式下的选中高亮前提
   /** 命中按下时触发（选中机制用）；无论是否进入拖拽都会调 */
   onPress?: () => void;
   private markerMode = false;
@@ -82,16 +85,9 @@ export class DragTarget extends Object3D {
   // 否则拖其他部位带动锚点（如脊柱弯腰搬动肩膀/脚球搬动膝盖）时，球滞留原地脱离钳制域
   private carryAnchor: Object3D | null = null;
   private readonly carryOffset = new Vector3();
-  // 轴箭头（Maya Move 样式移动操纵器，视图/命中抽在 AxisArrows）：拖箭头 = 沿该世界轴单轴移动；
-  // 中心球 = 屏幕平面自由拖（默认路径）。箭头随球显隐（setVisible）+ 选中态（setSelected）
-  private arrowsOn = false;
-  private arrowLen = 0;
-  private arrows: AxisArrows | null = null;
-  // 轴拖拽状态（按下时冻结锚点与轴；逐事件求射线相对轴线的最近参量，固定锚点防钳制漂移）
-  private axisDragging = false;
-  private readonly dragAxisVec = new Vector3();
-  private readonly dragStartPos = new Vector3();
-  private dragAxisT0 = 0;
+  // 外部操纵器（TransformControls）接管期间：自身指针拖拽让位（onPress 选中上报保留）——
+  // TC attach dragObject 后，按下/移动是 TC 的拖拽，本球不再进拖拽路径
+  private externalManipulator = false;
 
   constructor(
     camera: Camera,
@@ -99,7 +95,7 @@ export class DragTarget extends Object3D {
     initial: Vector3,
     color = 0xff5533,
     dragControl?: DragControl,
-    ballRadius = 0.0225,
+    ballRadius = DEFAULT_BALL_RADIUS,
   ) {
     super();
     this.dom = dom;
@@ -117,7 +113,6 @@ export class DragTarget extends Object3D {
     const plane = new Plane();
     const ndc = new Vector2();
     const hit = new Vector3();
-    const pick = { t: 0, dist: 0 };
 
     const setNdc = (e: DragPointerEvent) => {
       const r = dom.getBoundingClientRect();
@@ -132,29 +127,9 @@ export class DragTarget extends Object3D {
       this.ball.getWorldPosition(_c);
       const cameraDist = camera.position.distanceTo(_c);
       const tolerance = cameraDist * HIT_TOLERANCE_PER_METER;
-      // 轴箭头优先于中心球命中
-      const axisT = { t: 0 };
-      const best = this.arrows?.pick(ray.ray, _c, cameraDist, axisT) ?? -1;
-      if (best >= 0) {
-        this.onPress?.();
-        if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
-        this.dragging = true;
-        this.axisDragging = true;
-        this.arrows!.dragAxisIndex = best;
-        this.arrows!.applyColors();
-        this.arrows!.axisWorld(best, this.dragAxisVec);
-        this.dragAxisT0 = axisT.t;
-        this.dragStartPos.copy(this.getWorldPosition(new Vector3()));
-        dom.setPointerCapture(e.pointerId);
-        if (this.dragControl) {
-          this.dragControl.lock();
-          this.controlLocked = true;
-        }
-        return;
-      }
       if (ray.ray.distanceToPoint(_c) <= this.ballRadius * this.ball.scale.x + tolerance) {
         this.onPress?.();
-        if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
+        if (this.markerMode || this.externalManipulator) return; // 标记/接管模式：按下即选中，不进入拖拽
         this.dragging = true;
         // 拖拽平面：过当前位置、面向相机
         camera.getWorldDirection(plane.normal);
@@ -167,40 +142,15 @@ export class DragTarget extends Object3D {
       }
     };
     this.onPointerMove = (e: DragPointerEvent) => {
+      if (!this.dragging) return; // 非拖拽无悬停语义（操纵器高亮归外部操纵器/标记体系）
       setNdc(e);
       ray.setFromCamera(ndc, camera);
-      if (!this.dragging) {
-        // hover 高亮：箭头可见时挑出悬停轴，否则清空
-        if (this.interactive && this.ball.visible && this.arrows?.visible) {
-          this.ball.getWorldPosition(_c);
-          const ht = { t: 0 };
-          this.arrows.hoverAxis = this.arrows.pick(ray.ray, _c, camera.position.distanceTo(_c), ht);
-        } else if (this.arrows) {
-          this.arrows.hoverAxis = -1;
-        }
-        this.arrows?.applyColors();
-        return;
-      }
-      if (this.axisDragging) {
-        // 单轴移动：新位置 = 抓取锚点 + 轴 ×（当前参量 − 抓取参量）；锚点固定，钳制不漂移
-        if (rayAxisClosest(ray.ray, this.dragAxisVec, this.dragStartPos, pick)) {
-          hit.copy(this.dragStartPos).addScaledVector(this.dragAxisVec, pick.t - this.dragAxisT0);
-          this.applyDragPoint(hit);
-        }
-        return;
-      }
       if (ray.ray.intersectPlane(plane, hit)) {
         this.applyDragPoint(hit);
       }
     };
     this.onPointerUp = () => {
       this.dragging = false;
-      this.axisDragging = false;
-      if (this.arrows) {
-        this.arrows.dragAxisIndex = -1;
-        this.arrows.hoverAxis = -1; // 下一次 pointermove 重算
-        this.arrows.applyColors();
-      }
       this.releaseControl();
     };
     dom.addEventListener('pointerdown', this.onPointerDown);
@@ -218,10 +168,9 @@ export class DragTarget extends Object3D {
     this.interactive = v;
   }
 
-  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中；轴箭头跟随球与选中态） */
+  /** 显示/隐藏球体（模式切换配套；隐藏即不可命中） */
   setVisible(v: boolean): void {
     this.ball.visible = v;
-    this.syncArrowsVisibility();
   }
 
   /** 标记模式（rotate 模式下双通道控制点的球变成可点标记）：显示但不可拖，按下只触发选中。
@@ -231,11 +180,10 @@ export class DragTarget extends Object3D {
     this.syncMarkerAppearance();
   }
 
-  /** 选中态（Maya 同款：只有选中的控制点才显示操纵器）：轴箭头的显示前提之一；
-   *  标记模式下的球选中高亮 = 变亮黄（不改大小）——纯旋转控制点点击反馈全靠它 */
+  /** 选中态（Maya 同款：只有选中的控制点才显示操纵器）：标记模式下的球选中高亮 = 变亮黄
+   *  （不改大小）——纯旋转控制点点击反馈全靠它 */
   setSelected(v: boolean): void {
     this.selected = v;
-    this.syncArrowsVisibility();
     this.syncMarkerAppearance();
   }
 
@@ -249,30 +197,6 @@ export class DragTarget extends Object3D {
   setColor(color: number): void {
     this.baseColor = color;
     this.syncMarkerAppearance();
-  }
-
-  /** 每帧调用（ctl.update）：轴箭头屏幕恒定大小——按相机距离换算世界缩放 */
-  updateFrame(): void {
-    if (!this.arrows?.visible) return;
-    this.ball.getWorldPosition(_c);
-    this.arrows.updateScale(this.camera.position.distanceTo(_c));
-  }
-
-  private syncArrowsVisibility(): void {
-    this.arrows?.setVisible(this.arrowsOn && this.selected && this.ball.visible);
-  }
-
-  /** 开关轴箭头（Maya Move 样式移动操纵器）：拖箭头 = 沿该世界轴单轴移动。
-   *  len 缺省 = 8 倍球半径（屏幕恒定大小：参照距离 3.5m 处的世界长度）；箭头资源模块级共享，
-   *  重复调用不重复建。箭头只在控制点被选中时显示（setSelected） */
-  setAxisHandles(on: boolean, len?: number): void {
-    this.arrowsOn = on;
-    if (on && !this.arrows) {
-      this.arrowLen = len ?? this.ballRadius * 8;
-      this.arrows = new AxisArrows(this.arrowLen);
-      this.add(this.arrows.group);
-    }
-    this.syncArrowsVisibility();
   }
 
   /** 设置可达范围钳制：center 的实时世界位置为球心，radius 为最大距离。
@@ -308,6 +232,34 @@ export class DragTarget extends Object3D {
   /** 编程式移动（外部绑定/自动化测试）：过与指针拖拽相同的约束管线并刷新携带偏移 */
   moveTo(worldPos: Vector3): void {
     this.applyDragPoint(_planeHit.copy(worldPos));
+  }
+
+  /** 外部操纵器（TransformControls）接管面：TC attach 的对象即自身 */
+  get dragObject(): Object3D { return this; }
+  /** gizmo 尺寸倍率：相对类默认球半径 */
+  get manipulatorSize(): number { return this.ballRadius / DEFAULT_BALL_RADIUS; }
+
+  /** 外部拖拽开始（TC mouseDown）：复用 dragging 语义——carryAlong 暂停、isDragging = true */
+  beginExternalDrag(): void {
+    this.dragging = true;
+  }
+
+  /** 外部拖拽结束（TC mouseUp）：复位拖拽态。携带偏移不在此刷新——TC 写入位置时经
+   *  reclamp() 已按钳制后实际位置重记；若锚点在拖拽期间移动过，此处再重记会把球钉死在
+   *  拖拽结束瞬间的世界坐标上，不再跟随锚点（see test：endExternalDrag 后恢复携带） */
+  endExternalDrag(): void {
+    this.dragging = false;
+  }
+
+  /** 外部操纵器直接写入位置后调用：过约束管线回写（钳制逻辑与指针拖拽同一条管线），
+   *  回写后携带偏移按实际位置同步刷新 */
+  reclamp(): void {
+    this.snapIntoConstraints();
+  }
+
+  /** 外部操纵器接管期间：自身指针拖拽让位（onPress 选中上报保留；markerMode 只挡拖拽，语义不同源） */
+  setExternalManipulator(on: boolean): void {
+    this.externalManipulator = on;
   }
 
   /** 依次应用可达球与方向锥钳制（就地修改 hit，世界空间） */
@@ -382,9 +334,7 @@ export class DragTarget extends Object3D {
     this.coneAnchor = null;
     this.carryAnchor = null;
     this.dragging = false; // dispose 中途拖拽：状态一并复位，isDragging 不留陈旧 true
-    this.axisDragging = false;
-    this.arrows?.dispose();
-    this.arrows = null;
+    this.externalManipulator = false;
     this.releaseControl();
   }
 

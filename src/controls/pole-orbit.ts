@@ -1,6 +1,8 @@
 import { Camera, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
-import { AxisArrows, HIT_TOLERANCE_PER_METER, rayAxisClosest } from './axis-arrows';
 import type { DragControl, DragDom, DragPointerEvent } from './drag-target';
+
+// 与 DragTarget 同款命中容差：按相机距离换算的世界容差，让小球在屏幕上可点（触屏不脱靶）
+const HIT_TOLERANCE_PER_METER = 0.011;
 
 // 球离链轴的最小显示半径：手臂完全伸直时中骨关节钉在轴上（实测半径 0），球仍留 2cm 偏移——
 // ① 球不埋进手臂网格、看得见点得着；② poleTarget 的投影方向恒非零，求解器的方向通道不断线
@@ -17,7 +19,6 @@ const _ndc = new Vector2();
 const _plane = new Plane();
 const _ray = new Raycaster();
 const _q = new Quaternion(); // 父世界四元数的逆（世界方向 → 父局部）
-const _pick = { t: 0, dist: 0 };
 
 /**
  * pole 双通道操纵器（肘/膝影子球）：球贴在「中骨关节在 ⊥ 链轴平面上的影子」处——
@@ -48,16 +49,6 @@ export class PoleOrbit extends Object3D {
   // marker 模式（E 模式，与 DragTarget 同款语义）：球显示但不可拖，按下只触发 onPress（选中肘部）——
   // 肘环要选中肘部才上场，球是 E 模式下选中肘部的唯一入口，必须留场可点
   private markerMode = false;
-  // 轴箭头（Maya Move 样式，W 模式 + 选中肘部时上场）：拖箭头 = 沿该世界轴单轴挪球，
-  // 落回轨道时自然分解为角度（朝向）+ 径向（弯度）两个通道——与自由拖同一套语义
-  private arrowsOn = false;
-  private selected = false;
-  private arrows: AxisArrows | null = null;
-  // 轴拖拽状态（按下时冻结抓取点球世界位置与轴；参照架与自由拖共用 dragCenter/dragAxis）
-  private axisDragging = false;
-  private readonly dragStartBall = new Vector3();
-  private readonly dragArrowAxis = new Vector3();
-  private dragAxisT0 = 0;
   private lastDragRadius = 0; // 拖拽死区基准（按下时取显示半径）
   // 拖拽期间冻结的参照架（按下瞬间的环心/链轴）：角度通道的命中面 + 径向通道的直线锚点。
   // 不能逐帧跟活架——径向拖动会移动端球改变弯度，环心沿轴滑动、命中面跟着挪，视线贴近
@@ -103,29 +94,6 @@ export class PoleOrbit extends Object3D {
       this.setRay(e);
       this.ball.getWorldPosition(_center);
       const cameraDist = this.camera.position.distanceTo(_center);
-      // 轴箭头优先于中心球命中（marker 模式箭头不上场，天然不命中）
-      if (this.arrows?.visible) {
-        const at = { t: 0 };
-        const best = this.arrows.pick(_ray.ray, _center, cameraDist, at);
-        if (best >= 0) {
-          this.onPress?.();
-          this.dragging = true;
-          this.axisDragging = true;
-          this.arrows.dragAxisIndex = best;
-          this.arrows.applyColors();
-          this.arrows.axisWorld(best, this.dragArrowAxis);
-          this.dragAxisT0 = at.t;
-          this.dragStartBall.copy(_center); // 抓取点 = 球当前世界位置（单轴移动锚点）
-          this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS);
-          this.frame(this.dragCenter, this.dragAxis); // 冻结拖拽参照架（与自由拖同款）
-          this.dom.setPointerCapture(e.pointerId);
-          if (this.dragControl) {
-            this.dragControl.lock();
-            this.controlLocked = true;
-          }
-          return;
-        }
-      }
       if (_ray.ray.distanceToPoint(_center) > this.ballRadius + cameraDist * HIT_TOLERANCE_PER_METER) return;
       this.onPress?.();
       if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
@@ -139,37 +107,8 @@ export class PoleOrbit extends Object3D {
       }
     };
     this.onPointerMove = (e) => {
-      if (!this.dragging) {
-        // hover 高亮（仅箭头可见时）
-        if (this.arrows?.visible) {
-          this.setRay(e);
-          this.ball.getWorldPosition(_center);
-          const ht = { t: 0 };
-          this.arrows.hoverAxis = this.arrows.pick(_ray.ray, _center, this.camera.position.distanceTo(_center), ht);
-          this.arrows.applyColors();
-        }
-        return;
-      }
+      if (!this.dragging) return; // 非拖拽无悬停语义（操纵器高亮归外部操纵器/标记体系）
       this.setRay(e);
-      if (this.axisDragging) {
-        // 单轴挪球：意图位置 = 抓取点 + 轴×(t−t0)，再落回轨道——投影 ⊥ 冻结链轴，
-        // 方向写角度通道、模长写径向通道（与自由拖同一套分解，只是输入从平面命中换成轴参量）
-        if (rayAxisClosest(_ray.ray, this.dragArrowAxis, this.dragStartBall, _pick)) {
-          _w.copy(this.dragStartBall).addScaledVector(this.dragArrowAxis, _pick.t - this.dragAxisT0).sub(this.dragCenter);
-          _w.addScaledVector(this.dragAxis, -_w.dot(this.dragAxis));
-          if (_w.lengthSq() >= 1e-12) {
-            const radius = _w.length();
-            this.dir.copy(_w).divideScalar(radius);
-            this.orbitRadius = radius;
-            if (Math.abs(radius - this.lastDragRadius) > RADIUS_DRAG_DEADZONE) {
-              this.lastDragRadius = radius;
-              this.onRadiusDrag?.(radius);
-            }
-          }
-          this.place();
-        }
-        return;
-      }
       // 角度通道：冻结架（按下时的环心/链轴）平面命中取方向。不能用逐帧活架——径向拖动
       // 移动端球改变弯度，环心沿轴滑动、命中面跟挪，掠射（视线贴环面）时命中点沿射线
       // 暴走，半径意图自我放大直奔钳制上限（实测 38px 拖动打满弯度）
@@ -202,12 +141,6 @@ export class PoleOrbit extends Object3D {
     };
     this.onPointerUp = () => {
       this.dragging = false;
-      this.axisDragging = false;
-      if (this.arrows) {
-        this.arrows.dragAxisIndex = -1;
-        this.arrows.hoverAxis = -1; // 下一次 pointermove 重算
-        this.arrows.applyColors();
-      }
       this.releaseControl();
     };
     dom.addEventListener('pointerdown', this.onPointerDown);
@@ -225,36 +158,14 @@ export class PoleOrbit extends Object3D {
     this.axisTo = axisTo;
   }
 
-  /** 标记模式（E 模式）：球可见可点（onPress 照发，选中肘部用）但不可拖；轴箭头随标记模式收起 */
+  /** 标记模式（E 模式）：球可见可点（onPress 照发，选中肘部用）但不可拖 */
   setMarkerMode(v: boolean): void {
     this.markerMode = v;
-    this.syncArrowsVisibility();
   }
 
   /** 运行期换色（主题切换等）：pole 球没有选中变色逻辑，立即生效 */
   setColor(color: number): void {
     this.material.color.setHex(color);
-  }
-
-  /** 开关轴箭头（Maya Move 样式移动操纵器，与 DragTarget 同款）：拖箭头 = 沿该世界轴单轴挪球，
-   *  落回轨道分解为朝向 + 弯度。len 缺省 = 8 倍球半径。箭头只在选中肘部且非标记模式时显示 */
-  setAxisHandles(on: boolean, len?: number): void {
-    this.arrowsOn = on;
-    if (on && !this.arrows) {
-      this.arrows = new AxisArrows(len ?? this.ballRadius * 8);
-      this.add(this.arrows.group);
-    }
-    this.syncArrowsVisibility();
-  }
-
-  /** 选中态（肘部子选中）：轴箭头的显示前提之一 */
-  setSelected(v: boolean): void {
-    this.selected = v;
-    this.syncArrowsVisibility();
-  }
-
-  private syncArrowsVisibility(): void {
-    this.arrows?.setVisible(this.arrowsOn && this.selected && !this.markerMode && this.visible);
   }
 
   /** 逐帧推送轨道几何（装配层按链三角实测）：d = 中骨关节垂足离根骨的轴向距离，r = 关节离轴半径。
@@ -295,9 +206,6 @@ export class PoleOrbit extends Object3D {
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
     this.dragging = false;
-    this.axisDragging = false;
-    this.arrows?.dispose();
-    this.arrows = null;
     this.releaseControl();
     this.ball.geometry.dispose();
     this.material.dispose();
@@ -338,11 +246,6 @@ export class PoleOrbit extends Object3D {
     } else {
       this.position.copy(_center);
       this.ball.position.copy(_w).multiplyScalar(r);
-    }
-    // 箭头跟球走（同一父空间，组自身无旋转 = 世界轴朝向）+ 屏幕恒定大小
-    if (this.arrows?.visible) {
-      this.arrows.group.position.copy(this.ball.position);
-      this.arrows.updateScale(this.camera.position.distanceTo(this.ball.getWorldPosition(_hit)));
     }
   }
 

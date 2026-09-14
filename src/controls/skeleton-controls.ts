@@ -150,12 +150,11 @@ export class SkeletonControls {
     if (this.selectedName === name || this.selectedName?.startsWith(name + ':')) this.selectedName = null;
   }
 
-  /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 → 操纵器屏幕恒定大小 */
+  /** 每帧调用（rig.update 之后）：携带跟随 → 环跟随 → 引导线 */
   update(): void {
     for (const c of this.controls.values()) {
       for (const t of c.targets) t.carryAlong();
       c.update?.();
-      for (const t of c.targets) t.updateFrame();
     }
   }
 

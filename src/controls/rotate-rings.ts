@@ -1,5 +1,8 @@
 import { Camera, Color, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, TorusGeometry, Vector2, Vector3 } from 'three';
-import { MANIPULATOR_REF_DIST, type DragControl, type DragDom, type DragPointerEvent } from './drag-target';
+import type { DragControl, DragDom, DragPointerEvent } from './drag-target';
+
+// Task 3 重写时随渲染代码一并删除：屏幕恒定大小的参照距离（原抽自 axis-arrows，该模块已拔除）
+const MANIPULATOR_REF_DIST = 3.5;
 
 // 与 DragTarget 同款命中容差：按相机距离换算的世界容差，让细环在屏幕上可点
 const HIT_TOLERANCE_PER_METER = 0.011;

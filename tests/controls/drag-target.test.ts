@@ -137,103 +137,64 @@ describe('DragTarget', () => {
     expect(t.isDragging).toBe(false);
   });
 
-  // 世界坐标 → 桩屏幕坐标（800×600）
-  function clientFor(camera: ReturnType<typeof makeCamera>, world: Vector3) {
-    const v = world.clone().project(camera);
-    return { clientX: ((v.x + 1) / 2) * 800, clientY: ((-v.y + 1) / 2) * 600, pointerId: 1 };
-  }
-
-  it('轴箭头：拖 X 箭头只沿 X 移动（垂直屏幕位移不产生 y/z 分量）', () => {
-    const camera = makeCamera(); // (0,0,5) 朝 -Z 看原点
+  it('reclamp：外部写入的位置过钳制回写，携带偏移同步刷新', () => {
     const dom = makeDomStub();
+    const camera = makeCamera();
+    const scene = new Object3D();
+    const anchor = new Object3D();
+    scene.add(anchor);
+    scene.updateMatrixWorld(true);
     const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
-    t.setAxisHandles(true, 1);
-    t.setSelected(true); // 箭头只在选中后显示（Maya 同款）
-    // 点 X 箭头中点 (0.6,0,0) 的屏幕位置 → 轴拖拽（t0=0.6）
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
-    expect(t.isDragging).toBe(true);
-    // 拖到 (1.0,0.5,0) 的屏幕位置：垂直分量被投影掉，只剩 X 位移
-    // （透视下射线相对 X 轴的最近参量略小于 1.0，t 容差放宽；语义由 y/z 精确为零背书）
-    dom.fire('pointermove', clientFor(camera, new Vector3(1.0, 0.5, 0)));
-    expect(t.position.x).toBeCloseTo(0.4, 1);
-    expect(Math.abs(t.position.y)).toBeLessThan(1e-6);
-    expect(Math.abs(t.position.z)).toBeLessThan(1e-6);
-    dom.fire('pointerup', {});
+    scene.add(t);
+    t.setReachConstraint(anchor, 0.5);
+    t.setCarry(anchor);
+    // 模拟外部操纵器（TC）直接改写位置——不经过拖拽路径
+    t.position.set(2, 0, 0);
+    t.reclamp();
+    expect(t.position.length()).toBeCloseTo(0.5, 6); // 收回可达球面
+    // 携带偏移按钳制后的实际位置重记：锚点平移后保持相对偏移
+    anchor.position.set(1, 0, 0);
+    anchor.updateMatrixWorld(true);
+    t.carryAlong();
+    expect(t.position.distanceTo(new Vector3(1.5, 0, 0))).toBeLessThan(1e-6);
   });
 
-  it('轴箭头：箭头根部让位中心球；中心球仍走屏幕平面自由拖', () => {
-    const camera = makeCamera();
+  it('外部拖拽期间 carryAlong 暂停、isDragging 为 true，endExternalDrag 后恢复', () => {
     const dom = makeDomStub();
-    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
-    t.setAxisHandles(true, 1);
-    t.setSelected(true);
-    // 点箭头根部 (0.1,0,0)（< 0.25 杆长）：不算轴命中；距球心 0.1 超出球容差 → 不触发
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0.1, 0, 0)));
+    const camera = makeCamera();
+    const scene = new Object3D();
+    const anchor = new Object3D();
+    scene.add(anchor);
+    scene.updateMatrixWorld(true);
+    const t = new DragTarget(camera, dom, new Vector3(0.3, 0, 0));
+    scene.add(t);
+    t.setCarry(anchor);
+    t.beginExternalDrag();
+    expect(t.isDragging).toBe(true);
+    anchor.position.set(1, 0, 0);
+    anchor.updateMatrixWorld(true);
+    t.carryAlong();
+    expect(t.position.x).toBeCloseTo(0.3, 6); // 拖拽中不携带
+    t.endExternalDrag();
     expect(t.isDragging).toBe(false);
-    // 点中心球 → 自由拖
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0, 0, 0)));
-    expect(t.isDragging).toBe(true);
-    dom.fire('pointermove', clientFor(camera, new Vector3(0.3, 0.4, 0)));
-    expect(t.position.x).toBeCloseTo(0.3, 5);
-    expect(t.position.y).toBeCloseTo(0.4, 5);
-    dom.fire('pointerup', {});
+    t.carryAlong();
+    expect(t.position.x).toBeCloseTo(1.3, 6); // 恢复携带
   });
 
-  it('轴箭头命中区 = 视觉杆长（updateFrame 缩放含 arrowLen，命中不再乘一次）', () => {
-    const camera = makeCamera(); // (0,0,5) 朝 -Z 看原点，球在 dist=5
+  it('外部操纵器接管（setExternalManipulator）：按下只触发 onPress，不进入拖拽', () => {
     const dom = makeDomStub();
+    const camera = makeCamera(); // 默认相机朝原点看：世界原点 = 屏幕中心 (400,300)
     const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
-    t.setAxisHandles(true, 0.5); // arrowLen ≠ 1：旧 bug（命中长度 = arrowLen² × dist/REF）只有此时现形
-    t.setSelected(true);
-    t.updateFrame(); // 组缩放 = 0.5 × 5/3.5 ≈ 0.714 = 视觉杆长（单位几何总长 1）
-    // 点杆 70% 处 (0.5,0,0)：在视觉杆上，必须命中（旧 bug 命中区只到 0.41，此处脱靶）
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0.5, 0, 0)));
-    expect(t.isDragging).toBe(true);
-    dom.fire('pointerup', {});
-  });
-
-  it('轴箭头高亮：hover 变色、移开恢复、拖拽期间保持、抬起复位', () => {
-    const camera = makeCamera();
-    const dom = makeDomStub();
-    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
-    t.setAxisHandles(true, 1);
-    t.setSelected(true);
-    // 读实例级箭头材质（私有字段，测试经箭头组子节点取 shaft 材质）
-    const matOf = (i: number) => {
-      const g = (t as unknown as { arrows: { group: Object3D } }).arrows.group;
-      const arrow = g.children[i] as Object3D;
-      return (arrow.children[0] as unknown as { material: { color: { getHex(): number } } }).material;
-    };
-    const baseX = matOf(0).color.getHex();
-    const baseY = matOf(1).color.getHex();
-    // hover X 杆 → X 变色，Y 不变
-    dom.fire('pointermove', clientFor(camera, new Vector3(0.6, 0, 0)));
-    expect(matOf(0).color.getHex()).not.toBe(baseX);
-    expect(matOf(1).color.getHex()).toBe(baseY);
-    // 移到无箭头处 → 恢复
-    dom.fire('pointermove', clientFor(camera, new Vector3(-0.4, 0.9, 0)));
-    expect(matOf(0).color.getHex()).toBe(baseX);
-    // 拖 X 轴期间保持高亮（指针已不在杆上也保持）
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
-    dom.fire('pointermove', clientFor(camera, new Vector3(1.0, 0.5, 0)));
-    expect(matOf(0).color.getHex()).not.toBe(baseX);
-    // 抬起复位
-    dom.fire('pointerup', {});
-    expect(matOf(0).color.getHex()).toBe(baseX);
-  });
-
-  it('轴箭头随球显隐（rotate 模式隐藏后不可命中）', () => {
-    const camera = makeCamera();
-    const dom = makeDomStub();
-    const t = new DragTarget(camera, dom, new Vector3(0, 0, 0));
-    t.setAxisHandles(true, 1);
-    t.setSelected(true);
-    t.setVisible(false);
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
+    const scene = new Object3D();
+    scene.add(t);
+    scene.updateMatrixWorld(true);
+    const onPress = vi.fn();
+    t.onPress = onPress;
+    t.setExternalManipulator(true);
+    dom.fire('pointerdown', {});
+    expect(onPress).toHaveBeenCalledTimes(1);
     expect(t.isDragging).toBe(false);
-    t.setVisible(true);
-    dom.fire('pointerdown', clientFor(camera, new Vector3(0.6, 0, 0)));
-    expect(t.isDragging).toBe(true);
-    dom.fire('pointerup', {});
+    dom.fire('pointermove', { clientX: 420, clientY: 300 });
+    expect(t.position.length()).toBeLessThan(1e-6); // 没有拖动
   });
 });

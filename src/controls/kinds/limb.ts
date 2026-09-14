@@ -109,7 +109,6 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
 
   const initial = spec.position ? toVec3(spec.position) : endObj.getWorldPosition(new Vector3());
   const target = new DragTarget(ctx.camera, ctx.dom, initial, spec.color ?? 0xff5533, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
-  target.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头+中心球（选中后显示）
   target.onPress = () => ctx.select(spec.name);
   ctx.scene.add(target);
 
@@ -118,7 +117,6 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     ballRadius: spec.ballRadius ?? ctx.defaults.ballRadius,
     dragControl: ctx.dragControl,
   });
-  pole.setAxisHandles(true); // 移动操纵器 Maya 化：轴箭头（W 模式 + 选中肘部时上场）
   pole.bind(rootObj, target); // 链轴 = 根骨→端球（端球被可达钳制收拢过，与实际链一致）
   // pole 球/肘环 = 肘/膝自己的操纵器：点按 = 选中肘部子目标（`${name}:elbow`）——
   // W 模式选不选中它都在场（纯位置轨道球），E 模式选中后肘环上场、手臂本体的环不受影响
@@ -378,7 +376,6 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
       pole.setMarkerMode(mode === 'rotate');
     },
     onSelectionChange(sub) {
-      pole.setSelected(sub === 'elbow'); // 选中肘部才出轴箭头（W 模式；marker 内部再挡一层）
       // 肩/髋标记球的选中高亮归这里管（跟随子选中 root；applyView 对常驻标记的主选中高亮由本行覆盖）
       shoulderMarker?.setSelected(sub === 'root');
     },

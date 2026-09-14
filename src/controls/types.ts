@@ -26,6 +26,24 @@ export interface ControlsDefaults {
 
 export type ResolvedDefaults = Required<ControlsDefaults>;
 
+/** 可被外部操纵器（TransformControls）直接改写的拖拽对象 */
+export interface ExternalDraggable {
+  /** 外部操纵器 attach 的对象（通常 = 自身；PoleOrbit = 自身的 ball） */
+  readonly dragObject: Object3D;
+  /** 外部拖拽开始：置拖拽态（carryAlong 暂停，isDragging = true） */
+  beginExternalDrag(): void;
+  /** 外部拖拽结束：复位拖拽态。携带偏移不在此刷新——TC 写入位置时经 reclamp() 已按
+   *  钳制后实际位置重记；若锚点在拖拽期间移动过，此处再重记会把球钉在世界坐标上（不跟随锚点） */
+  endExternalDrag(): void;
+  /** 外部操纵器直接写入位置后调用：过约束管线回写（钳制逻辑复用现有 applyConstraints），
+   *  回写后携带偏移同步刷新 */
+  reclamp(): void;
+  /** 外部操纵器接管期间：自身指针拖拽让位（onPress 选中上报保留） */
+  setExternalManipulator(on: boolean): void;
+  /** gizmo 尺寸倍率（相对各自类默认尺寸） */
+  readonly manipulatorSize: number;
+}
+
 /** 控制点声明的公共字段；内置 kind 见 kinds/ 下各 spec */
 export interface ControlSpecBase {
   /** 唯一名（ctl.get(name) 取值） */

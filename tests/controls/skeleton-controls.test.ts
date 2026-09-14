@@ -677,7 +677,7 @@ describe('createSkeletonControls', () => {
     driver.fireDragEnd();
     dom.fire('pointerup', {});
     const ballScaleW = legH.target.ball.scale.x; // W 模式球大小基线（W/E 切换不应改变）
-    // 点击位置取对角线方向：环心正上/正侧会落进髋球轴箭头的命中区（箭头优先于环的断言对象）
+    // 环无自身指针交互（无头 proxy，命中归 TransformControls）：点环附近空白不进拖拽
     dom.fire('pointerdown', clientFor(camera, hipsH.rings!.getWorldPosition(new Vector3()).add(new Vector3(0.08, 0.08, 0.08))));
     expect(hipsH.rings!.isDragging).toBe(false);
 

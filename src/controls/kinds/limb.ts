@@ -364,7 +364,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     moveTargets: [target],
     rotateRings: rings ? [rings] : [],
     subRingGroups: [
-      { key: 'elbow', rings: [elbowRings] }, // 双通道：W 出 pole 轴箭头，E 出环
+      { key: 'elbow', rings: [elbowRings] }, // 双通道：W attach pole 球（subMoveTargets），E attach 肘环
       // 肩/髋根环是纯旋转子目标（W 模式无操纵器）：选中即出环不看 W/E
       ...(shoulderRings ? [{ key: 'root', rings: [shoulderRings], rotationOnly: true }] : []),
     ],

@@ -199,7 +199,8 @@ export class SkeletonControls {
     return this.manipulatorMode;
   }
 
-  /** 选中控制点（Maya 同款：只有选中的显示操纵器——move 模式显轴箭头、rotate 模式显旋转环）；
+  /** 选中控制点（Maya 同款：只有选中的 attach 操纵器——move 模式 attach 位置通道、
+   *  rotate 模式 attach 旋转环，纯位置控制点两种模式都 attach 位置通道）；
    *  传 null 取消选中。操纵器的 onPress 会自动调它（点哪个选中哪个）。
    *  支持子选中（`'name:sub'`）：limb 的肘/膝是独立选中目标（点 pole 球选中它），
    *  子选中时该子环组上场、主环收起，互不干扰 */
@@ -246,7 +247,7 @@ export class SkeletonControls {
       if (!moveSet.has(t)) t.setSelected(selected);
     }
     c.onModeChange?.(this.manipulatorMode); // 体系外操纵器（pole 球换班）
-    c.onSelectionChange?.(subSelected); // 子选中钩子（pole 球轴箭头等）
+    c.onSelectionChange?.(subSelected); // 子选中钩子（limb 据此高亮肩/髋标记球）
   }
 
   /** 外部操纵器拖拽事件分派：按当前 attach 对象的类型走 proxy（旋转环）或 draggable（拖球）通道 */

@@ -58,7 +58,7 @@ export class TransformControlsDriver implements ManipulatorDriver {
   setMode(mode: ManipulatorMode): void {
     // 接口说装配器的语言：'move' 映射到 TC 的 'translate'；'rotate' 原样
     this.controls.setMode(mode === 'rotate' ? 'rotate' : 'translate');
-    // translate 沿世界轴（旧轴箭头语义）；rotate 绕自身轴（旧环语义：环朝向 = 期望骨骼朝向）
+    // translate 沿世界轴（位置通道语义）；rotate 绕自身轴（环语义：环朝向 = 期望骨骼朝向）
     this.controls.space = mode === 'rotate' ? 'local' : 'world';
   }
 

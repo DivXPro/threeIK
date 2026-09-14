@@ -197,4 +197,72 @@ describe('DragTarget', () => {
     dom.fire('pointermove', { clientX: 420, clientY: 300 });
     expect(t.position.length()).toBeLessThan(1e-6); // 没有拖动
   });
+
+  it('PoleOrbit.reclamp：外部写入的球位置按轨道分解——方向写角度通道、半径超死区触发 onRadiusDrag', () => {
+    const dom = makeDomStub();
+    const scene = new Object3D();
+    const from = new Object3D(); // 根骨：原点
+    const to = new Object3D();   // 端球：链轴 = -Z
+    to.position.set(0, 0, -1);
+    scene.add(from, to);
+    scene.updateMatrixWorld(true);
+    const pole = new PoleOrbit(makeCamera(), dom, { ballRadius: 0.02 });
+    scene.add(pole);
+    pole.bind(from, to);
+    pole.setOrbitFrame(0.5, 0.2); // 环心 = (0,0,-0.5)，半径 0.2
+    pole.setDirection(new Vector3(1, 0, 0));
+    pole.update();
+    scene.updateMatrixWorld(true);
+    expect(pole.ball.getWorldPosition(new Vector3()).distanceTo(new Vector3(0.2, 0, -0.5))).toBeLessThan(1e-6);
+
+    const radii: number[] = [];
+    pole.onRadiusDrag = (r) => radii.push(r);
+    pole.beginExternalDrag();
+    // 模拟 TC 直接挪球（ball.position 是 PoleOrbit 局部偏移，父恒等）：方向 X→Y，半径 0.2→0.4
+    pole.ball.position.set(0, 0.4, 0);
+    pole.reclamp();
+    expect(radii).toHaveLength(1);
+    expect(radii[0]).toBeCloseTo(0.4, 6);
+    pole.endExternalDrag();
+    // 落回轨道：环心 + 新方向 × 新半径（轴向分量被丢弃）
+    pole.update();
+    scene.updateMatrixWorld(true);
+    expect(pole.ball.getWorldPosition(new Vector3()).distanceTo(new Vector3(0, 0.4, -0.5))).toBeLessThan(1e-6);
+  });
+
+  it('PoleOrbit.beginExternalDrag 期间 setOrbitFrame 不覆盖半径意图；setExternalManipulator 只留 onPress', () => {
+    const dom = makeDomStub();
+    const scene = new Object3D();
+    const from = new Object3D();
+    const to = new Object3D();
+    to.position.set(0, 0, -1);
+    scene.add(from, to);
+    scene.updateMatrixWorld(true);
+    const pole = new PoleOrbit(makeCamera(), dom, {});
+    scene.add(pole);
+    pole.bind(from, to);
+    pole.setDirection(new Vector3(1, 0, 0)); // 初始方向 ⊥ 链轴，否则 place() 投影退化不落位
+    pole.setOrbitFrame(0.5, 0.2);
+    pole.update();
+    pole.beginExternalDrag();
+    expect(pole.isDragging).toBe(true);
+    pole.setOrbitFrame(0.5, 0.05); // 拖拽中：实测半径不覆盖用户意图
+    pole.update();
+    scene.updateMatrixWorld(true);
+    expect(pole.ball.getWorldPosition(new Vector3()).sub(new Vector3(0, 0, -0.5)).length()).toBeCloseTo(0.2, 6);
+    pole.endExternalDrag();
+
+    // 接管期间按下只上报选中
+    const onPress = vi.fn();
+    pole.onPress = onPress;
+    pole.setExternalManipulator(true);
+    // 球世界位置 = (0, 0.2·dir…, -0.5)；setDirection(1,0,0) 后 = (0.2, 0, -0.5) → 投影到屏幕
+    pole.setDirection(new Vector3(1, 0, 0));
+    pole.update();
+    scene.updateMatrixWorld(true);
+    const p = pole.ball.getWorldPosition(new Vector3()).project(makeCamera());
+    dom.fire('pointerdown', { clientX: ((p.x + 1) / 2) * 800, clientY: ((-p.y + 1) / 2) * 600 });
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(pole.isDragging).toBe(false);
+  });
 });

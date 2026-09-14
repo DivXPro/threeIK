@@ -1,5 +1,7 @@
 import { Camera, Mesh, MeshBasicMaterial, Object3D, Plane, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+import { DEFAULT_BALL_RADIUS } from './drag-target';
 import type { DragControl, DragDom, DragPointerEvent } from './drag-target';
+import type { ExternalDraggable } from './types';
 
 // 与 DragTarget 同款命中容差：按相机距离换算的世界容差，让小球在屏幕上可点（触屏不脱靶）
 const HIT_TOLERANCE_PER_METER = 0.011;
@@ -36,7 +38,7 @@ const _q = new Quaternion(); // 父世界四元数的逆（世界方向 → 父�
  * 方向漂到链轴错误一侧（手横到胸前时肘翻到身前，「反肘」）。逐帧落位只做投影不重写；
  * 投影退化（轴≈方向）时用上次落位方向兜底。径向则无此问题：空闲时直接同步实测半径。
  */
-export class PoleOrbit extends Object3D {
+export class PoleOrbit extends Object3D implements ExternalDraggable {
   /** 影子球（TwoBoneIK poleTarget 读它的世界位置） */
   readonly ball: Mesh;
   readonly ballRadius: number;
@@ -49,6 +51,8 @@ export class PoleOrbit extends Object3D {
   // marker 模式（E 模式，与 DragTarget 同款语义）：球显示但不可拖，按下只触发 onPress（选中肘部）——
   // 肘环要选中肘部才上场，球是 E 模式下选中肘部的唯一入口，必须留场可点
   private markerMode = false;
+  // 外部操纵器接管（TransformControls attach dragObject）：按下只上报选中，不进入内置拖拽
+  private externalManipulator = false;
   private lastDragRadius = 0; // 拖拽死区基准（按下时取显示半径）
   // 拖拽期间冻结的参照架（按下瞬间的环心/链轴）：角度通道的命中面 + 径向通道的直线锚点。
   // 不能逐帧跟活架——径向拖动会移动端球改变弯度，环心沿轴滑动、命中面跟着挪，视线贴近
@@ -96,7 +100,7 @@ export class PoleOrbit extends Object3D {
       const cameraDist = this.camera.position.distanceTo(_center);
       if (_ray.ray.distanceToPoint(_center) > this.ballRadius + cameraDist * HIT_TOLERANCE_PER_METER) return;
       this.onPress?.();
-      if (this.markerMode) return; // 标记模式：按下即选中，不进入拖拽
+      if (this.markerMode || this.externalManipulator) return; // 标记模式/外部接管：按下即选中，不进入拖拽
       this.dragging = true;
       this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS); // 死区基准与球的显示位置一致
       if (this.frame(this.dragCenter, this.dragAxis)) { /* 冻结拖拽参照架 */ }
@@ -168,6 +172,42 @@ export class PoleOrbit extends Object3D {
     this.material.color.setHex(color);
   }
 
+  /** 外部操纵器（TransformControls）attach 的对象：球本体（PoleOrbit 原点 = 环心，不是操控对象） */
+  get dragObject(): Object3D { return this.ball; }
+  get manipulatorSize(): number { return this.ballRadius / DEFAULT_BALL_RADIUS; }
+
+  /** 外部拖拽开始：置拖拽态（setOrbitFrame 不再覆盖半径意图），死区基准与显示半径一致 */
+  beginExternalDrag(): void {
+    this.dragging = true;
+    this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS);
+  }
+
+  endExternalDrag(): void {
+    this.dragging = false;
+  }
+
+  /** 外部操纵器直接写入球位置后调用：按轨道语义分解落回——⊥链轴方向写角度通道（dir）、
+   *  模长写径向通道（超死区触发 onRadiusDrag）、轴向分量丢弃（沿链轴挪球无意义）。
+   *  用活架不用冻结架：掠射暴走是射线命中面的问题，TC 直接写位置没有这个问题 */
+  reclamp(): void {
+    if (!this.frame(_center, _axis)) return;
+    this.ball.getWorldPosition(_w).sub(_center);
+    _w.addScaledVector(_axis, -_w.dot(_axis));
+    if (_w.lengthSq() < 1e-12) { this.place(); return; }
+    const radius = _w.length();
+    this.dir.copy(_w).divideScalar(radius);
+    this.orbitRadius = radius;
+    if (Math.abs(radius - this.lastDragRadius) > RADIUS_DRAG_DEADZONE) {
+      this.lastDragRadius = radius;
+      this.onRadiusDrag?.(radius);
+    }
+    this.place();
+  }
+
+  setExternalManipulator(on: boolean): void {
+    this.externalManipulator = on;
+  }
+
   /** 逐帧推送轨道几何（装配层按链三角实测）：d = 中骨关节垂足离根骨的轴向距离，r = 关节离轴半径。
    *  拖拽中只更新环心（半径是用户意图，不被实测值覆盖）；空闲时半径同步实测——球即弯度仪表 */
   setOrbitFrame(d: number, r: number): void {
@@ -206,6 +246,7 @@ export class PoleOrbit extends Object3D {
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
     this.dragging = false;
+    this.externalManipulator = false;
     this.releaseControl();
     this.ball.geometry.dispose();
     this.material.dispose();

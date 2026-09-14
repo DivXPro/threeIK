@@ -30,6 +30,8 @@ export type ResolvedDefaults = Required<ControlsDefaults>;
 export interface ExternalDraggable {
   /** 外部操纵器 attach 的对象（通常 = 自身；PoleOrbit = 自身的 ball） */
   readonly dragObject: Object3D;
+  /** 是否正被拖拽（装配器换挂/摘除操纵器时据此补发 endExternalDrag，防拖拽态卡死） */
+  readonly isDragging: boolean;
   /** 外部拖拽开始：置拖拽态（carryAlong 暂停，isDragging = true） */
   beginExternalDrag(): void;
   /** 外部拖拽结束：复位拖拽态。携带偏移不在此刷新——TC 写入位置时经 reclamp() 已按

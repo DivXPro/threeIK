@@ -128,8 +128,12 @@ export class DragTarget extends Object3D implements ExternalDraggable {
       const cameraDist = camera.position.distanceTo(_c);
       const tolerance = cameraDist * HIT_TOLERANCE_PER_METER;
       if (ray.ray.distanceToPoint(_c) <= this.ballRadius * this.ball.scale.x + tolerance) {
+        // 选中快照须在 onPress 之前取：onPress 同步触发 select → attachManipulator →
+        // setExternalManipulator(true)（首击即 attach），门槛若读按下后的值，首击自由拖永不启动。
+        // 无双重捕获之虞：TC 的 dom 监听先于本类注册，同一轮 pointerdown 已用「无/陈旧 attach」跑过
+        const externalBeforePress = this.externalManipulator;
         this.onPress?.();
-        if (this.markerMode || this.externalManipulator) return; // 标记/接管模式：按下即选中，不进入拖拽
+        if (this.markerMode || externalBeforePress) return; // 标记/接管模式：按下即选中，不进入拖拽
         this.dragging = true;
         // 拖拽平面：过当前位置、面向相机
         camera.getWorldDirection(plane.normal);

@@ -99,8 +99,10 @@ export class PoleOrbit extends Object3D implements ExternalDraggable {
       this.ball.getWorldPosition(_center);
       const cameraDist = this.camera.position.distanceTo(_center);
       if (_ray.ray.distanceToPoint(_center) > this.ballRadius + cameraDist * HIT_TOLERANCE_PER_METER) return;
+      // 快照须在 onPress 之前取（同 DragTarget：首击 onPress 同步完成 attach，门槛读按下后值则自由拖死锁）
+      const externalBeforePress = this.externalManipulator;
       this.onPress?.();
-      if (this.markerMode || this.externalManipulator) return; // 标记模式/外部接管：按下即选中，不进入拖拽
+      if (this.markerMode || externalBeforePress) return; // 标记模式/外部接管：按下即选中，不进入拖拽
       this.dragging = true;
       this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS); // 死区基准与球的显示位置一致
       if (this.frame(this.dragCenter, this.dragAxis)) { /* 冻结拖拽参照架 */ }

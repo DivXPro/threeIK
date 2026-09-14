@@ -225,9 +225,9 @@ describe('createSkeletonControls', () => {
     const ringP = ballPos.clone().sub(centerA)
       .applyQuaternion(new Quaternion().setFromAxisAngle(axis, Math.PI / 2))
       .add(centerA);
-    // 按下选中肘部（attach 到 pole）：TC 接管期间球自身拖拽让位——等价 TC 拖拽走 driver 派发
+    // 首击 = 选中 + 自由拖（spec §2）：pole 球进入自身拖拽；后续 TC 拖拽走 driver 派发
     dom.fire('pointerdown', clientFor(camera, ballPos));
-    expect(legH.pole.isDragging).toBe(false);
+    expect(legH.pole.isDragging).toBe(true);
     driver.fireDragStart(null);
     expect(legH.pole.isDragging).toBe(true);
     // 模拟 TC 直写球位置：沿环滑到绕轴 +90° 的等半径点（角度通道），reclamp 分解落回
@@ -268,10 +268,10 @@ describe('createSkeletonControls', () => {
     // 默认 move：pole 球显示（attach 挂点），未选中 → 操纵器 detach
     expect(legH.pole.visible).toBe(true);
     expect(driver.attachedTo).toBeNull();
-    // 点 pole 球 = 选中肘部子目标，attach 切到 pole 球；TC 接管期间球自身拖拽让位
+    // 点 pole 球 = 选中肘部子目标，attach 切到 pole 球；首击同时进入自身自由拖（spec §2）
     dom.fire('pointerdown', clientFor(camera, legH.pole.ball.getWorldPosition(new Vector3())));
     expect(driver.attachedTo).toBe(legH.pole.ball);
-    expect(legH.pole.isDragging).toBe(false);
+    expect(legH.pole.isDragging).toBe(true);
     driver.fireDragStart(null);
     expect(legH.pole.isDragging).toBe(true);
     driver.fireDragEnd();
@@ -663,10 +663,10 @@ describe('createSkeletonControls', () => {
     const legH = ctl.get<LimbControlHandle>('leg')!;
     expect(hipsH.rings).toBeDefined();
     expect(legH.rings).toBeDefined();
-    // 默认 move：未选中 → detach；球可拖（选中即 attach，TC 拖拽经 driver 派发）
+    // 默认 move：未选中 → detach；首击 = 选中 + 自由拖（第二击起 TC 接管走 driver 派发）
     expect(driver.attachedTo).toBeNull();
     dom.fire('pointerdown', clientFor(camera, legH.target.getWorldPosition(new Vector3())));
-    expect(legH.target.isDragging).toBe(false); // attach 后自身拖拽让位
+    expect(legH.target.isDragging).toBe(true); // 首击自由拖（spec §2）
     driver.fireDragStart(null);
     expect(legH.target.isDragging).toBe(true);
     driver.fireDragEnd();
@@ -1207,9 +1207,9 @@ describe('快捷键', () => {
   it('自定义表与数组多绑；hotkeys:false 不监听；setHotkeys 运行期换绑/关闭', () => {
     const keyTarget = makeKeyTarget();
     const { ctl } = setupWithDriver({ hotkeyTarget: keyTarget, hotkeys: { move: ['q', '1'], rotate: 'r' } });
-    keyTarget.fire({ key: 'w' });
-    expect(ctl.getManipulatorMode()).toBe('move'); // 默认 w 已失效（还是 move 不变）
     keyTarget.fire({ key: 'r' });
+    expect(ctl.getManipulatorMode()).toBe('rotate');
+    keyTarget.fire({ key: 'w' }); // 旧默认键在自定义表下已失效：不得把 rotate 切回 move
     expect(ctl.getManipulatorMode()).toBe('rotate');
     keyTarget.fire({ key: '1' });
     expect(ctl.getManipulatorMode()).toBe('move');
@@ -1237,5 +1237,184 @@ describe('快捷键', () => {
     expect(ctl.getManipulatorMode()).toBe('rotate');
     ctl.dispose();
     expect(keyTarget.count()).toBe(0);
+  });
+});
+
+describe('首击自由拖（C1 回归）', () => {
+  it('未选中球按下 = 选中 + 自身平面拖（chain / limb 端球 / pole 球）；已选中球让位 TC', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const driver = makeFakeDriver();
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: driver,
+      controls: [
+        { kind: 'chain', name: 'spine', rootBone: 'Spine', endBone: 'Neck' },
+        { kind: 'limb', name: 'arm', rootBone: 'ArmL', middleBone: 'ForeL', endBone: 'HandL' },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96 },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const spineH = ctl.get<ChainControlHandle>('spine')!;
+    const armH = ctl.get<LimbControlHandle>('arm')!;
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    rig.update(0);
+    ctl.update();
+    scene.updateMatrixWorld(true);
+
+    // ① chain 端球：首击 = 选中 + 自身拖拽（C1：onPress 同步完成 attach 后 externalManipulator
+    //    已 true，拖拽门槛必须取按下前的快照，否则首击自由拖永不启动）
+    const spineBall = spineH.target;
+    expect(ctl.getSelected()).toBeNull();
+    dom.fire('pointerdown', clientFor(camera, spineBall.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('spine');
+    expect(driver.attachedTo).toBe(spineBall);
+    expect(spineBall.isDragging).toBe(true);
+    const spineBefore = spineBall.getWorldPosition(new Vector3());
+    dom.fire('pointermove', clientFor(camera, spineBefore.clone().add(new Vector3(0.15, 0.05, 0))));
+    expect(spineBall.getWorldPosition(new Vector3()).distanceTo(spineBefore)).toBeGreaterThan(1e-3);
+    dom.fire('pointerup', {});
+
+    // ② limb 端球（有可达钳制，小位移仍应生效）
+    const armBall = armH.target;
+    dom.fire('pointerdown', clientFor(camera, armBall.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('arm');
+    expect(armBall.isDragging).toBe(true);
+    const armBefore = armBall.getWorldPosition(new Vector3());
+    dom.fire('pointermove', clientFor(camera, armBefore.clone().add(new Vector3(0.05, -0.05, 0))));
+    expect(armBall.getWorldPosition(new Vector3()).distanceTo(armBefore)).toBeGreaterThan(1e-3);
+    dom.fire('pointerup', {});
+
+    // ③ pole 球：首击 = 选中肘部子目标 + 自身拖拽开环（双通道一次手势）
+    const pole = legH.pole;
+    dom.fire('pointerdown', clientFor(camera, pole.ball.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('leg:elbow');
+    expect(pole.isDragging).toBe(true);
+    const poleBefore = pole.ball.getWorldPosition(new Vector3());
+    dom.fire('pointermove', clientFor(camera, poleBefore.clone().add(new Vector3(0, 0.08, 0.08))));
+    expect(pole.ball.getWorldPosition(new Vector3()).distanceTo(poleBefore)).toBeGreaterThan(1e-3);
+    dom.fire('pointerup', {});
+
+    // ④ 已选中（TC attach 中）的球再次按下：门槛快照为 true → 让位 TC，自身拖拽不启动
+    dom.fire('pointerdown', clientFor(camera, armBall.getWorldPosition(new Vector3()))); // 首击：选中 + 自由拖
+    expect(ctl.getSelected()).toBe('arm');
+    expect(armBall.isDragging).toBe(true);
+    dom.fire('pointerup', {});
+    dom.fire('pointerdown', clientFor(camera, armBall.getWorldPosition(new Vector3()))); // 第二击起 TC 接管
+    expect(ctl.getSelected()).toBe('arm');
+    expect(armBall.isDragging).toBe(false); // 旧代码误用按下后值，此断言即 C1 回归
+    const armStill = armBall.getWorldPosition(new Vector3());
+    dom.fire('pointermove', clientFor(camera, armStill.clone().add(new Vector3(0.1, 0, 0))));
+    expect(armBall.getWorldPosition(new Vector3()).distanceTo(armStill)).toBeLessThan(1e-6); // 自身拖拽没抢手势
+    dom.fire('pointerup', {});
+    ctl.dispose();
+  });
+});
+
+describe('拖拽中途重挂操纵器（M1 回归）', () => {
+  it('TC detach 不发 mouseUp：换选/失焦先给旧对象补 endExternalDrag（球与环），W→E 换班亦然', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const driver = makeFakeDriver();
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: driver,
+      controls: [
+        { kind: 'chain', name: 'spine', rootBone: 'Spine', endBone: 'Neck' },
+        { kind: 'limb', name: 'leg', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, endRotation: true },
+        { kind: 'bone', name: 'chest', bone: 'Spine' },
+      ],
+    });
+    scene.updateMatrixWorld(true);
+    const spineH = ctl.get<ChainControlHandle>('spine')!;
+    const legH = ctl.get<LimbControlHandle>('leg')!;
+    const chestH = ctl.get<BoneControlHandle>('chest')!;
+    rig.update(0);
+    ctl.update();
+    scene.updateMatrixWorld(true);
+
+    // ① chain 球拖拽中途失焦：旧对象 isDragging 必须复位（否则 carryAlong 永久暂停）
+    ctl.select('spine');
+    driver.fireDragStart('X');
+    expect(spineH.target.isDragging).toBe(true);
+    ctl.select(null); // 真实 TC：detach 不补 mouseUp——装配器须先给旧对象补 endExternalDrag
+    expect(spineH.target.isDragging).toBe(false);
+
+    // ② 环拖拽中途失焦：proxy dragging 复位，下一帧 update 重新同步朝向（拖拽残差被收敛，
+    //   CopyTransformModifier 不再被套死的脏朝向驱动）
+    ctl.select('chest');
+    driver.fireDragStart('Y');
+    expect(chestH.rings.isDragging).toBe(true);
+    const ringsQ0 = chestH.rings.getWorldQuaternion(new Quaternion());
+    chestH.rings.quaternion.setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 3); // 拖拽残差（未走 updateExternalDrag 的直写）
+    ctl.select(null);
+    expect(chestH.rings.isDragging).toBe(false);
+    ctl.update();
+    scene.updateMatrixWorld(true);
+    expect(chestH.rings.getWorldQuaternion(new Quaternion()).angleTo(ringsQ0)).toBeLessThan(1e-4);
+
+    // ③ W→E 换班中途：球的拖拽被收尾（球 → 端骨环换班）
+    ctl.setManipulatorMode('move');
+    ctl.select('leg');
+    driver.fireDragStart(null);
+    expect(legH.target.isDragging).toBe(true);
+    ctl.setManipulatorMode('rotate');
+    expect(legH.target.isDragging).toBe(false);
+    driver.fireDragEnd(); // 真实 TC 随后补发的 mouseUp 落在新 attach 的环上，不应报错
+    ctl.dispose();
+  });
+
+  it('注入的 manipulator 由调用方持有：dispose 不 dispose 外部 driver（缺省创建的才归库管）', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const driver = makeFakeDriver();
+    let disposed = 0;
+    driver.dispose = () => { disposed++; };
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: driver,
+      controls: [{ kind: 'root', name: 'hips', bone: 'Hips' }],
+    });
+    ctl.dispose();
+    expect(disposed).toBe(0);
+  });
+
+  it('纯 subMoveTargets 自定义 kind 的子目标可选中（m2 回归）', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const driver = makeFakeDriver();
+    let subTarget: DragTarget | null = null;
+    registerControlKind('submove-only', (ctx, spec) => {
+      const marker = new DragTarget(ctx.camera, ctx.dom, new Vector3(0, 2, 0), 0x334455, ctx.dragControl);
+      marker.setMarkerMode(true); // 常驻标记：选中入口
+      marker.onPress = () => ctx.select(spec.name);
+      const tip = new DragTarget(ctx.camera, ctx.dom, new Vector3(0.2, 2, 0), 0x334456, ctx.dragControl);
+      subTarget = tip;
+      ctx.scene.add(marker);
+      ctx.scene.add(tip);
+      const handle: ControlHandleBase = {
+        name: spec.name, kind: 'submove-only', target: marker,
+        modifier: { active: true, influence: 1 } as unknown as ControlHandleBase['modifier'],
+        setActive() {},
+      };
+      const built: BuiltControl = {
+        name: spec.name, kind: 'submove-only',
+        targets: [marker, tip], moveTargets: [marker],
+        // 没有 subRingGroups：子目标只走 move 通道——子选中校验必须也认 subMoveTargets 的 key
+        subMoveTargets: [{ key: 'tip', target: tip }],
+        modifiers: [],
+        postSolve() {}, handle,
+        dispose() {
+          ctx.scene.remove(marker); marker.dispose();
+          ctx.scene.remove(tip); tip.dispose();
+        },
+      };
+      return built;
+    });
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: driver,
+      controls: [{ kind: 'submove-only', name: 'gadget' }],
+    });
+    ctl.select('gadget:tip');
+    expect(ctl.getSelected()).toBe('gadget:tip');
+    expect(driver.attachedTo).toBe(subTarget!.dragObject);
+    ctl.dispose();
   });
 });

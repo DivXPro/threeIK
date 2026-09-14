@@ -29,7 +29,8 @@ export interface SkeletonControlsOptions {
   facing?: Vector3;
   defaults?: ControlsDefaults;
   controls: ControlPointSpec[];
-  /** 外部操纵器驱动（缺省内部构造 TransformControlsDriver；node 测试传 fake） */
+  /** 外部操纵器驱动（缺省内部构造 TransformControlsDriver，由库管理、dispose 随装配器一并释放；
+   *  注入的 driver 由调用方持有——装配器 dispose 不碰它） */
   manipulator?: ManipulatorDriver;
   /** 快捷键表；false = 关闭内置监听（宿主用 setManipulatorMode/select(null) 自绑）。缺省 = 默认表 */
   hotkeys?: HotkeyMap | false;
@@ -88,11 +89,14 @@ export class SkeletonControls {
   private hotkeyTarget: HotkeyTarget | null = null;
   private hotkeyListener: ((e: HotkeyEvent) => void) | null = null;
   private readonly onModeChangeCallback?: (mode: ManipulatorMode) => void;
+  /** driver 所有权：缺省内部构造 = 库持有（dispose 释放）；选项注入 = 调用方持有（dispose 不碰） */
+  private readonly ownsDriver: boolean;
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
     this.hotkeyTargetOption = options.hotkeyTarget;
     this.onModeChangeCallback = options.onManipulatorModeChange;
+    this.ownsDriver = !options.manipulator;
     this.ctx = {
       rig,
       scene: options.scene,
@@ -201,7 +205,7 @@ export class SkeletonControls {
     this.dom.removeEventListener('pointermove', this.onDomPointerMove);
     this.dom.removeEventListener('pointerup', this.onDomPointerUp);
     this.pendingBlur = null;
-    this.driver.dispose();
+    if (this.ownsDriver) this.driver.dispose();
     for (const c of this.controls.values()) {
       for (const m of c.modifiers) this.ctx.rig.removeModifier(m.modifier);
       c.dispose();
@@ -270,7 +274,8 @@ export class SkeletonControls {
       const sub = sep < 0 ? null : name.slice(sep + 1);
       const c = this.controls.get(main);
       if (!c) return;
-      if (sub !== null && !c.subRingGroups?.some((g) => g.key === sub)) return;
+      if (sub !== null && !c.subRingGroups?.some((g) => g.key === sub)
+        && !c.subMoveTargets?.some((s) => s.key === sub)) return;
     }
     if (this.selectedName === name) return;
     this.selectedName = name;
@@ -359,8 +364,14 @@ export class SkeletonControls {
     this.attachManipulator(t ?? null);
   }
 
-  /** obj 为 ExternalDraggable 或 RotateRings proxy；null = detach */
+  /** obj 为 ExternalDraggable 或 RotateRings proxy；null = detach。
+   *  换挂/摘除前先给旧对象补 endExternalDrag：真实 TC 的 detach() 不补发 mouseUp，
+   *  拖拽中途换选/切模式时旧对象的拖拽态（isDragging/dragging）会卡死——
+   *  拖球 carryAlong 永久暂停、环 update() 跳过朝向同步（CopyTransform 持续套用中断的朝向） */
   private attachManipulator(obj: ExternalDraggable | RotateRings | null): void {
+    const prev = this.currentManipulator;
+    if (prev?.draggable && prev.draggable !== obj && prev.draggable.isDragging) prev.draggable.endExternalDrag();
+    if (prev?.proxy && prev.proxy !== obj && prev.proxy.isDragging) prev.proxy.endExternalDrag();
     // 旧对象让位标志复位
     if (this.currentManipulator?.draggable && this.currentManipulator.draggable !== obj) {
       this.currentManipulator.draggable.setExternalManipulator(false);

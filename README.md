@@ -117,7 +117,7 @@ ctl.update(); // 携带 → 环跟随 → 引导线 → 操纵器屏幕恒定大
 
 Maya 式 W/E：`ctl.setManipulatorMode('move' | 'rotate')`——移动/旋转操纵器由 three.js TransformControls 提供，W = 位置球 + 移动 gizmo，E = 旋转环；双通道控制点的球在 E 退化为可点标记（大小不变，只切可拖性）。选中机制：只有选中的控制点显示操纵器，点操纵器自动选中，点空白失焦。子选中（`'armL:elbow'` / `'armL:root'`）让肘部/肩部成为独立选中目标。纯旋转控制点（bone、肩/髋根环）选中即出环，不看 W/E。
 
-默认操纵器是 `TransformControlsDriver`；想接自研 gizmo 可在 `createSkeletonControls` 传 `manipulator: ManipulatorDriver` 注入自定义驱动——装配器只依赖 `ManipulatorDriver` 接口（`setMode`/`attach`/`onDragStart`/`onDragChange`/`onDragEnd`/`dispose`），实现可整体替换。模式切换可经 `onManipulatorModeChange?: (mode) => void` 订阅（如 GUI 下拉框随键盘同步）。
+默认操纵器是 `TransformControlsDriver`；想接自研 gizmo 可在 `createSkeletonControls` 传 `manipulator: ManipulatorDriver` 注入自定义驱动——装配器只依赖 `ManipulatorDriver` 接口（`setMode`/`attach`/`onDragStart`/`onDragChange`/`onDragEnd`/`dispose`），实现可整体替换。生命周期注意：**注入的 driver 由调用方持有**（`ctl.dispose()` 不会 dispose 它）；缺省由库内部创建的那个才随装配器一并释放。模式切换可经 `onManipulatorModeChange?: (mode) => void` 订阅（如 GUI 下拉框随键盘同步）。
 
 ### 快捷键
 

@@ -81,6 +81,26 @@ export interface ControlBuildContext {
  *  纯旋转控制点（rotationOnly）W 模式没有操纵器可显示，选中即出环不看模式） */
 export type ManipulatorMode = 'move' | 'rotate';
 
+/** 快捷键表（SkeletonControls 的 hotkeys 选项）：字段缺省回落默认表；
+ *  数组 = 一个动作绑多键；空数组 = 禁用该动作 */
+export interface HotkeyMap {
+  /** 切 move 模式，默认 'w' */
+  move?: string | string[];
+  /** 切 rotate 模式，默认 'e' */
+  rotate?: string | string[];
+  /** 取消选中，默认 'Escape' */
+  deselect?: string | string[];
+}
+
+/** 键盘事件最小结构（库不依赖 DOM lib；与 KeyboardEvent 字段子集兼容） */
+export interface HotkeyEvent { key: string; repeat: boolean; target: unknown; }
+
+/** 键盘事件宿主（缺省 window 若存在；node 测试传桩；嵌入方限定监听范围走这里） */
+export interface HotkeyTarget {
+  addEventListener(type: 'keydown', listener: (e: HotkeyEvent) => void): void;
+  removeEventListener(type: 'keydown', listener: (e: HotkeyEvent) => void): void;
+}
+
 /** attach 选项：外部操纵器按控制点语义裁剪 TC 通道 */
 export interface ManipulatorAttachOptions {
   /** rotate 模式显示的轴环（缺省 [true, true, true]） */

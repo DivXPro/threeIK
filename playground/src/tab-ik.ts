@@ -18,7 +18,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
   let character: LoadedCharacter | null = null;
   let ctl: SkeletonControls | null = null;
   let unsubFrame: (() => void) | null = null;
-  let onKey: ((e: KeyboardEvent) => void) | null = null;
 
   return {
     async mount() {
@@ -41,6 +40,9 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
         dom: ctx.renderer.domElement,
         dragControl: ctx.dragControl,
         facing,
+        // 快捷键（W/E/Escape）收归库内默认表；模式变化回调同步 GUI 下拉框——
+        // params/modeCtrl 声明在后，闭包延迟到按键/GUI 时执行（构造只注册监听不触发）
+        onManipulatorModeChange: (m) => { params.manipulatorMode = m; modeCtrl?.updateDisplay(); },
         controls: [
           { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true },
           {
@@ -137,17 +139,9 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       let modeCtrl: { updateDisplay(): void } | null = null;
       const applyMode = (m: 'move' | 'rotate') => {
         params.manipulatorMode = m;
-        ctl!.setManipulatorMode(m);
-        modeCtrl?.updateDisplay(); // 键盘切换后 GUI 下拉框同步
+        ctl!.setManipulatorMode(m); // 实际变化才触发 onManipulatorModeChange：GUI 自同步幂等，无循环
+        modeCtrl?.updateDisplay();
       };
-      const onKeyHandler = (e: KeyboardEvent) => {
-        if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
-        if (e.key === 'w' || e.key === 'W') applyMode('move');
-        else if (e.key === 'e' || e.key === 'E') applyMode('rotate');
-        else if (e.key === 'Escape') ctl!.select(null); // 取消选中：操纵器（箭头/环）收起
-      };
-      onKey = onKeyHandler;
-      window.addEventListener('keydown', onKeyHandler);
 
       gui = new GUI({ title: 'IK' });
       modeCtrl = gui.add(params, 'manipulatorMode', { '移动 (W)': 'move', '旋转 (E)': 'rotate' })
@@ -194,8 +188,6 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },
     unmount() {
-      if (onKey) window.removeEventListener('keydown', onKey);
-      onKey = null;
       gui?.destroy();
       gui = null;
       unsubFrame?.();

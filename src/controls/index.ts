@@ -7,7 +7,7 @@ export { SkeletonControls, createSkeletonControls } from './skeleton-controls';
 export type { SkeletonControlsOptions, ControlPointSpec, BuiltinControlSpec } from './skeleton-controls';
 export { registerControlKind } from './registry';
 export type {
-  ControlBuildContext, BuiltControl, ControlKindFactory, ControlsDefaults, ControlSpecBase, ControlHandleBase, ManipulatorMode,
+  ControlBuildContext, BuiltControl, ControlKindFactory, ControlsDefaults, ControlSpecBase, ControlHandleBase, HotkeyEvent, HotkeyMap, HotkeyTarget, ManipulatorMode,
 } from './types';
 export type { RootControlSpec, RootControlHandle } from './kinds/root';
 export type { LimbControlSpec, LimbPoleSpec, LimbControlHandle } from './kinds/limb';

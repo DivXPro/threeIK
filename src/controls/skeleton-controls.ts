@@ -10,7 +10,7 @@ import { buildChainControl, type ChainControlSpec } from './kinds/chain';
 import { buildBoneControl, type BoneControlSpec } from './kinds/bone';
 import { RotateRings } from './rotate-rings';
 import { TransformControlsDriver } from './transform-controls-driver';
-import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ExternalDraggable, ManipulatorDriver, ManipulatorMode } from './types';
+import type { BuiltControl, ControlBuildContext, ControlHandleBase, ControlKindFactory, ControlsDefaults, ControlSpecBase, ExternalDraggable, HotkeyEvent, HotkeyMap, HotkeyTarget, ManipulatorDriver, ManipulatorMode } from './types';
 
 export type BuiltinControlSpec = RootControlSpec | LimbControlSpec | LookAtControlSpec | ChainControlSpec | BoneControlSpec;
 /** 声明式控制点：内置 4 种 + registerControlKind 注册的自定义 kind */
@@ -31,6 +31,12 @@ export interface SkeletonControlsOptions {
   controls: ControlPointSpec[];
   /** 外部操纵器驱动（缺省内部构造 TransformControlsDriver；node 测试传 fake） */
   manipulator?: ManipulatorDriver;
+  /** 快捷键表；false = 关闭内置监听（宿主用 setManipulatorMode/select(null) 自绑）。缺省 = 默认表 */
+  hotkeys?: HotkeyMap | false;
+  /** 键盘事件宿主（缺省 window 若存在；node 测试传桩；嵌入方限定监听范围走这里） */
+  hotkeyTarget?: HotkeyTarget;
+  /** 模式变化回调（快捷键/GUI 任一入口切换都触发；playground 用它同步 GUI 下拉框） */
+  onManipulatorModeChange?: (mode: ManipulatorMode) => void;
 }
 
 const BUILTINS: Record<string, ControlKindFactory> = {
@@ -40,6 +46,13 @@ const BUILTINS: Record<string, ControlKindFactory> = {
   chain: buildChainControl as ControlKindFactory,
   bone: buildBoneControl as ControlKindFactory,
 };
+
+/** 默认快捷键表：Maya W/E + Escape 取消选中 */
+const DEFAULT_HOTKEYS: Required<HotkeyMap> = { move: ['w'], rotate: ['e'], deselect: ['Escape'] };
+
+function toKeyArray(v: string | string[]): string[] {
+  return Array.isArray(v) ? v : [v];
+}
 
 /** 空白按下的「点击」位移容差（px²）：超过即视为拖拽（转视角等），不触发失焦 */
 const BLUR_CLICK_SLOP_SQ = 4 * 4;
@@ -71,9 +84,15 @@ export class SkeletonControls {
   private readonly onDomPointerDown: (e: DragPointerEvent) => void;
   private readonly onDomPointerMove: (e: DragPointerEvent) => void;
   private readonly onDomPointerUp: () => void;
+  private readonly hotkeyTargetOption?: HotkeyTarget;
+  private hotkeyTarget: HotkeyTarget | null = null;
+  private hotkeyListener: ((e: HotkeyEvent) => void) | null = null;
+  private readonly onModeChangeCallback?: (mode: ManipulatorMode) => void;
 
   constructor(options: SkeletonControlsOptions) {
     const { rig } = options;
+    this.hotkeyTargetOption = options.hotkeyTarget;
+    this.onModeChangeCallback = options.onManipulatorModeChange;
     this.ctx = {
       rig,
       scene: options.scene,
@@ -134,6 +153,9 @@ export class SkeletonControls {
     this.dom.addEventListener('pointerdown', this.onDomPointerDown);
     this.dom.addEventListener('pointermove', this.onDomPointerMove);
     this.dom.addEventListener('pointerup', this.onDomPointerUp);
+
+    // 快捷键监听收尾注册（缺省表：W/E/Escape）；false = 交给宿主自绑
+    this.setHotkeys(options.hotkeys ?? DEFAULT_HOTKEYS);
   }
 
   /** 取参数调节句柄（按声明时的 name）；泛型收窄到具体句柄类型 */
@@ -174,6 +196,7 @@ export class SkeletonControls {
   }
 
   dispose(): void {
+    this.unbindHotkeys();
     this.dom.removeEventListener('pointerdown', this.onDomPointerDown);
     this.dom.removeEventListener('pointermove', this.onDomPointerMove);
     this.dom.removeEventListener('pointerup', this.onDomPointerUp);
@@ -193,6 +216,42 @@ export class SkeletonControls {
     this.manipulatorMode = mode;
     for (const c of this.controls.values()) this.applyView(c);
     this.retargetManipulator();
+    this.onModeChangeCallback?.(mode); // 只在实际变化后触发：GUI/键盘多入口互相同步且不空转
+  }
+
+  /** 快捷键绑定：map = 换绑（字段缺省回落默认表），false = 关闭。dispose 自动解绑 */
+  setHotkeys(map: HotkeyMap | false): void {
+    this.unbindHotkeys();
+    if (map === false) return;
+    // 库不依赖 DOM lib：window 只能从 globalThis 动态探测（node 环境无此全局）
+    const g = globalThis as { window?: HotkeyTarget };
+    const target = this.hotkeyTargetOption ?? (typeof g.window !== 'undefined' ? g.window : undefined);
+    if (!target) return;
+    const resolved = {
+      move: toKeyArray(map.move ?? DEFAULT_HOTKEYS.move),
+      rotate: toKeyArray(map.rotate ?? DEFAULT_HOTKEYS.rotate),
+      deselect: toKeyArray(map.deselect ?? DEFAULT_HOTKEYS.deselect),
+    };
+    const match = (keys: string[], key: string) => keys.some((k) => k.toLowerCase() === key.toLowerCase());
+    this.hotkeyListener = (e) => {
+      if (e.repeat) return; // 长按不抖
+      // 可编辑元素（input/textarea/contenteditable）里打字不触发——嵌入系统表单不打架
+      const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (match(resolved.move, e.key)) this.setManipulatorMode('move');
+      else if (match(resolved.rotate, e.key)) this.setManipulatorMode('rotate');
+      else if (match(resolved.deselect, e.key)) this.select(null);
+    };
+    target.addEventListener('keydown', this.hotkeyListener);
+    this.hotkeyTarget = target;
+  }
+
+  private unbindHotkeys(): void {
+    if (this.hotkeyTarget && this.hotkeyListener) {
+      this.hotkeyTarget.removeEventListener('keydown', this.hotkeyListener);
+    }
+    this.hotkeyTarget = null;
+    this.hotkeyListener = null;
   }
 
   getManipulatorMode(): ManipulatorMode {

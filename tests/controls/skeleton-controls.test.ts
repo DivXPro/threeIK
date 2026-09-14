@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Bone, MeshBasicMaterial, Object3D, Quaternion, Scene, Vector3 } from 'three';
 import { SkeletonRig } from '../../src/core/skeleton-rig';
 import { createSkeletonControls, registerControlKind } from '../../src/controls';
-import type { BoneControlHandle, BuiltControl, ChainControlHandle, ControlHandleBase, LimbControlHandle, RootControlHandle } from '../../src/controls';
+import type { BoneControlHandle, BuiltControl, ChainControlHandle, ControlHandleBase, HotkeyEvent, HotkeyMap, HotkeyTarget, LimbControlHandle, ManipulatorMode, RootControlHandle } from '../../src/controls';
 import { DragTarget, MARKER_SELECTED_COLOR } from '../../src/controls/drag-target';
 import { RotateRings } from '../../src/controls/rotate-rings';
 import { makeCamera, makeDomStub, makeFakeDriver } from './test-utils';
@@ -1029,26 +1029,35 @@ describe('createSkeletonControls', () => {
   });
 });
 
+/** 标准 rig + 三类控制点（双通道 limb / 纯位置 chain / 纯旋转 bone），fake driver 记录 attach。
+ *  options 透传 SkeletonControls 的快捷键相关选项（Task 6：快捷键 describe 复用同一 rig） */
+function setupWithDriver(options: {
+  hotkeys?: HotkeyMap | false;
+  hotkeyTarget?: HotkeyTarget;
+  onManipulatorModeChange?: (mode: ManipulatorMode) => void;
+} = {}) {
+  const { rig } = buildRig();
+  const { scene, camera, dom } = makeCtx(rig);
+  const driver = makeFakeDriver();
+  const ctl = createSkeletonControls({
+    rig, scene, camera, dom, manipulator: driver,
+    hotkeys: options.hotkeys,
+    hotkeyTarget: options.hotkeyTarget,
+    onManipulatorModeChange: options.onManipulatorModeChange,
+    controls: [
+      { kind: 'limb', name: '腿L', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96, endRotation: true, rootRotation: true },
+      { kind: 'chain', name: '脊柱', rootBone: 'Spine', endBone: 'Neck' },   // 纯位置
+      { kind: 'bone', name: '胸口', bone: 'Spine' },                          // 纯旋转
+    ],
+  });
+  const legL = ctl.get<LimbControlHandle>('腿L')!;
+  const spine = ctl.get<ChainControlHandle>('脊柱')!;
+  const chest = ctl.get<BoneControlHandle>('胸口')!;
+  const handles = { legL, spine, chest };
+  return { ctl, driver, handles, rig, scene, dom };
+}
+
 describe('attach 路由（fake driver）', () => {
-  /** 标准 rig + 三类控制点（双通道 limb / 纯位置 chain / 纯旋转 bone），fake driver 记录 attach */
-  function setupWithDriver() {
-    const { rig } = buildRig();
-    const { scene, camera, dom } = makeCtx(rig);
-    const driver = makeFakeDriver();
-    const ctl = createSkeletonControls({
-      rig, scene, camera, dom, manipulator: driver,
-      controls: [
-        { kind: 'limb', name: '腿L', rootBone: 'UpLegL', middleBone: 'LegL', endBone: 'FootL', carry: false, keepAlive: 0.96, endRotation: true, rootRotation: true },
-        { kind: 'chain', name: '脊柱', rootBone: 'Spine', endBone: 'Neck' },   // 纯位置
-        { kind: 'bone', name: '胸口', bone: 'Spine' },                          // 纯旋转
-      ],
-    });
-    const legL = ctl.get<LimbControlHandle>('腿L')!;
-    const spine = ctl.get<ChainControlHandle>('脊柱')!;
-    const chest = ctl.get<BoneControlHandle>('胸口')!;
-    const handles = { legL, spine, chest };
-    return { ctl, driver, handles, rig, scene, dom };
-  }
 
   it('move 模式选中双通道主名 → move attach 端球；切 rotate → rotate attach 端骨环', () => {
     const { ctl, driver, handles } = setupWithDriver();
@@ -1162,5 +1171,71 @@ describe('attach 路由（fake driver）', () => {
     dom.fire('pointerdown', {}); // 同一轮按下（真实环境 TC 的 dom 监听先跑）
     dom.fire('pointerup', {});
     expect(ctl.getSelected()).toBe('腿L');
+  });
+});
+
+describe('快捷键', () => {
+  function makeKeyTarget() {
+    const listeners: Array<(e: HotkeyEvent) => void> = [];
+    return {
+      addEventListener(_t: 'keydown', l: (e: HotkeyEvent) => void) { listeners.push(l); },
+      removeEventListener(_t: 'keydown', l: (e: HotkeyEvent) => void) {
+        const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1);
+      },
+      fire(e: Partial<HotkeyEvent> & { key: string }) {
+        for (const l of [...listeners]) l({ repeat: false, target: null, ...e });
+      },
+      count: () => listeners.length,
+    };
+  }
+
+  it('默认表：w/e 切模式（大小写不敏感）、Escape 取消选中；模式回调触发', () => {
+    const keyTarget = makeKeyTarget();
+    const modes: string[] = [];
+    const { ctl } = setupWithDriver({ hotkeyTarget: keyTarget, onManipulatorModeChange: (m) => modes.push(m) });
+    ctl.select('腿L');
+    keyTarget.fire({ key: 'E' });
+    expect(ctl.getManipulatorMode()).toBe('rotate');
+    keyTarget.fire({ key: 'w' });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    expect(modes).toEqual(['rotate', 'move']);
+    keyTarget.fire({ key: 'Escape' });
+    expect(ctl.getSelected()).toBeNull();
+    ctl.dispose();
+  });
+
+  it('自定义表与数组多绑；hotkeys:false 不监听；setHotkeys 运行期换绑/关闭', () => {
+    const keyTarget = makeKeyTarget();
+    const { ctl } = setupWithDriver({ hotkeyTarget: keyTarget, hotkeys: { move: ['q', '1'], rotate: 'r' } });
+    keyTarget.fire({ key: 'w' });
+    expect(ctl.getManipulatorMode()).toBe('move'); // 默认 w 已失效（还是 move 不变）
+    keyTarget.fire({ key: 'r' });
+    expect(ctl.getManipulatorMode()).toBe('rotate');
+    keyTarget.fire({ key: '1' });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    ctl.setHotkeys(false);
+    keyTarget.fire({ key: 'r' });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    ctl.setHotkeys({ rotate: 'e' });
+    keyTarget.fire({ key: 'e' });
+    expect(ctl.getManipulatorMode()).toBe('rotate');
+    ctl.dispose();
+  });
+
+  it('repeat 与可编辑元素事件源不响应；dispose 解绑', () => {
+    const keyTarget = makeKeyTarget();
+    const { ctl } = setupWithDriver({ hotkeyTarget: keyTarget });
+    keyTarget.fire({ key: 'e', repeat: true });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    keyTarget.fire({ key: 'e', target: { tagName: 'INPUT' } });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    keyTarget.fire({ key: 'e', target: { tagName: 'TEXTAREA' } });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    keyTarget.fire({ key: 'e', target: { isContentEditable: true } });
+    expect(ctl.getManipulatorMode()).toBe('move');
+    keyTarget.fire({ key: 'e' });
+    expect(ctl.getManipulatorMode()).toBe('rotate');
+    ctl.dispose();
+    expect(keyTarget.count()).toBe(0);
   });
 });

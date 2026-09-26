@@ -7,6 +7,11 @@ export interface CopyTransformConfig extends BoneConstraintConfig {
   copyPosition?: boolean;
   copyRotation?: boolean;
   copyScale?: boolean;
+  /** 旋转分摊（0–1，缺省 0 = 不分摊）：把「期望 vs 当前」的世界旋转增量先按此比例分给父骨，
+   *  本骨补足剩余——本骨最终世界朝向恒等于期望（任意角度精确，非近似）。头环带脖子这类
+   *  「端骨操控、父骨分节」的解剖学旋转用。增量基准 = 本 modifier 运行前的当前全局姿势
+   *  （管线每帧从 base 重解，基准即「无本控制时」的姿势）。与 amount<1 不组合（分摊路径全量） */
+  parentShare?: number;
 }
 
 // 模块临时量（一次性分配，processModification 热路径零分配）。单次迭代内占用约定：
@@ -27,6 +32,13 @@ const _q = new Quaternion();
 const _parentG = new Quaternion();
 const _local = new Quaternion();
 const _mixQ = new Quaternion();
+// parentShare 分摊专用槽（applySharedRotation 内自包含，与上方单次迭代占用约定不交叉）：
+// _curW 先作本骨当前世界（求增量 D），随即复用为父骨当前世界/父骨目标局部；_dWorld 增量；
+// _shareW 父骨目标世界；_gpW 祖父世界（父骨局部换算用）
+const _curW = new Quaternion();
+const _dWorld = new Quaternion();
+const _shareW = new Quaternion();
+const _gpW = new Quaternion();
 
 export class CopyTransformModifier extends Modifier {
   constructor(private configs: CopyTransformConfig[]) {
@@ -37,6 +49,7 @@ export class CopyTransformModifier extends Modifier {
     for (const c of this.configs) {
       const bone = rig.boneIndex(c.applyBone);
       const amount = c.amount ?? 1;
+      const parentShare = c.parentShare ?? 0;
       const copyPos = c.copyPosition ?? false;
       const copyRot = c.copyRotation ?? true;
       if (c.copyScale) rig.warnOnce('copy-scale-unsupported', 'CopyTransformModifier: global scale copy is not supported in v1 (ignored)');
@@ -58,14 +71,18 @@ export class CopyTransformModifier extends Modifier {
         }
         if (copyRot) {
           rig.getGlobalPoseQuaternion(src, _q);
-          _local.copy(_parentG).invert().multiply(_q).normalize();
-          if (amount < 1) {
-            // 裁决1：slerpQuaternions 的 qb 不得与 this 同参（见 aim.ts 注释），经 _mixQ 中转
-            rig.getPoseRotation(bone, _q);
-            _mixQ.copy(_local);
-            _local.slerpQuaternions(_q, _mixQ, amount);
+          if (parentShare > 0 && parent >= 0) {
+            this.applySharedRotation(rig, bone, parent, _q, parentShare);
+          } else {
+            _local.copy(_parentG).invert().multiply(_q).normalize();
+            if (amount < 1) {
+              // 裁决1：slerpQuaternions 的 qb 不得与 this 同参（见 aim.ts 注释），经 _mixQ 中转
+              rig.getPoseRotation(bone, _q);
+              _mixQ.copy(_local);
+              _local.slerpQuaternions(_q, _mixQ, amount);
+            }
+            rig.setPoseRotation(bone, _local);
           }
-          rig.setPoseRotation(bone, _local);
         }
         if (copyPos) {
           rig.getGlobalPosePosition(src, _pos);
@@ -99,14 +116,18 @@ export class CopyTransformModifier extends Modifier {
             parentObj.getWorldQuaternion(_local);
             _q.premultiply(_local.invert());
           }
-          _local.copy(_parentG).invert().multiply(_q).normalize();
-          if (amount < 1) {
-            // 裁决1：同参缺陷修复，同 bone 分支
-            rig.getPoseRotation(bone, _q);
-            _mixQ.copy(_local);
-            _local.slerpQuaternions(_q, _mixQ, amount);
+          if (parentShare > 0 && parent >= 0) {
+            this.applySharedRotation(rig, bone, parent, _q, parentShare);
+          } else {
+            _local.copy(_parentG).invert().multiply(_q).normalize();
+            if (amount < 1) {
+              // 裁决1：同参缺陷修复，同 bone 分支
+              rig.getPoseRotation(bone, _q);
+              _mixQ.copy(_local);
+              _local.slerpQuaternions(_q, _mixQ, amount);
+            }
+            rig.setPoseRotation(bone, _local);
           }
-          rig.setPoseRotation(bone, _local);
         }
         if (copyPos) {
           obj.getWorldPosition(_pos);
@@ -126,6 +147,23 @@ export class CopyTransformModifier extends Modifier {
         }
       }
     }
+  }
+
+  /** parentShare 分摊写入：增量 D = desired × 当前⁻¹（世界），父骨先吃 slerp(I, D, share) 份，
+   *  本骨补足剩余——本骨最终世界朝向恒等于 desired（shareW × 本骨局部 = desired，任意角度精确）。
+   *  desiredWorld 为 rig 空间；全部解析计算，写出前不回读 rig（写父骨后全局缓存已变） */
+  private applySharedRotation(rig: SkeletonRig, bone: number, parent: number, desiredWorld: Quaternion, share: number): void {
+    rig.getGlobalPoseQuaternion(bone, _curW);
+    _dWorld.copy(_curW).invert().premultiply(desiredWorld); // D = desired × cur⁻¹
+    rig.getGlobalPoseQuaternion(parent, _curW);             // 复用槽：父骨当前世界
+    _shareW.identity().slerp(_dWorld, share).multiply(_curW); // 父骨目标世界 = slerp(I, D, share) × 父骨当前
+    const gp = rig.getParentIndex(parent);
+    if (gp >= 0) rig.getGlobalPoseQuaternion(gp, _gpW);
+    else _gpW.identity();
+    _curW.copy(_gpW).invert().multiply(_shareW).normalize(); // 父骨目标局部
+    rig.setPoseRotation(parent, _curW);
+    _local.copy(_shareW).invert().multiply(desiredWorld).normalize(); // 本骨局部 = 父骨目标世界⁻¹ × desired
+    rig.setPoseRotation(bone, _local);
   }
 
   toJSON(): Record<string, unknown> {

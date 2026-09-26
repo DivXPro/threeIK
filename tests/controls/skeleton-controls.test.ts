@@ -962,6 +962,123 @@ describe('createSkeletonControls', () => {
     ctl.dispose();
   });
 
+  it('bone·shareWithParent：环的旋转增量按比例分摊给父骨（头环带脖子）；分摊 modifier 只在拖拽期间激活', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: makeFakeDriver(),
+      controls: [{ kind: 'bone', name: 'headBone', bone: 'Head', shareWithParent: 0.5 }],
+    });
+    const h = ctl.get<BoneControlHandle>('headBone')!;
+    const neck = rig.getBoneAt(rig.boneIndex('Neck'));
+    const head = rig.getBoneAt(rig.boneIndex('Head'));
+    scene.updateMatrixWorld(true);
+
+    // 分摊 modifier 拖拽间关闭：不钉头、不挡同链求解器（注视球/IK）
+    expect(h.modifier.active).toBe(false);
+
+    // 拖拽生命周期回调（宿主接线注视球重坐用）：start/end 各触发一次
+    const calls: string[] = [];
+    h.onDragStart = () => calls.push('start');
+    h.onDragEnd = () => calls.push('end');
+
+    // 直驱环（手动序列：拖拽中 rig.update 才生效——松手即关闭，语义同真实 TC 事件流）
+    h.rings.beginExternalDrag(1);
+    expect(h.modifier.active).toBe(true);
+    h.rings.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2); // 挂场景顶层，quaternion 即世界
+    h.rings.updateExternalDrag();
+    rig.update(0);
+    scene.updateMatrixWorld(true);
+    // 头世界朝向 = 环朝向（任意分摊比例精确）；脖子承担一半增量（rest 全单位 → 45°）
+    expect(head.getWorldQuaternion(new Quaternion()).normalize().angleTo(
+      h.rings.getWorldQuaternion(new Quaternion()).normalize())).toBeLessThan(1e-4);
+    expect(neck.getWorldQuaternion(new Quaternion()).normalize().angleTo(new Quaternion())).toBeCloseTo(Math.PI / 4, 3);
+
+    h.rings.endExternalDrag();
+    expect(h.modifier.active).toBe(false);
+    expect(calls).toEqual(['start', 'end']);
+    ctl.dispose();
+  });
+
+  it('lookAt·rotateShare：单控制点双通道——W 拖球 / E 出环；环拖拽分摊给父骨，松手重坐球保持朝向', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const driver = makeFakeDriver();
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: driver,
+      controls: [{ kind: 'lookAt', name: 'head', rootBone: 'Neck', endBone: 'Head', rotateShare: 0.5 }],
+    });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const neck = rig.getBoneAt(rig.boneIndex('Neck'));
+    const head = rig.getBoneAt(rig.boneIndex('Head'));
+    scene.updateMatrixWorld(true);
+
+    // 双通道形态：环上场；E 模式点球（标记）选中 → attach 环
+    expect(h.rings).toBeTruthy();
+    ctl.setManipulatorMode('rotate');
+    expect(driver.attachedTo).toBeNull();
+    dom.fire('pointerdown', clientFor(camera, h.target.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('head');
+    expect(driver.attachedTo).toBe(h.rings);
+    dom.fire('pointerup', {});
+
+    // 环镜像的是求解后头朝向（分摊模式无 FK 携带）：先同步一次再取拖拽基准
+    ctl.update();
+    const headQ0 = head.getWorldQuaternion(new Quaternion());
+    const neckQ0 = neck.getWorldQuaternion(new Quaternion());
+    const aimBefore = head.getWorldPosition(new Vector3()).sub(neck.getWorldPosition(new Vector3())).normalize();
+
+    // 直驱环（手动序列，同 bone 分摊测试）：绕世界 Y 转 90°
+    h.rings!.beginExternalDrag(1);
+    h.rings!.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2); // 挂场景顶层 = 世界
+    h.rings!.updateExternalDrag();
+    rig.update(0);
+    scene.updateMatrixWorld(true);
+    const ringQ = h.rings!.getWorldQuaternion(new Quaternion());
+    // 拖拽期间环赢（分摊 modifier 排在自家 CCD 之后）：头世界朝向 = 环朝向（精确）
+    expect(head.getWorldQuaternion(new Quaternion()).normalize().angleTo(ringQ.clone().normalize())).toBeLessThan(1e-4);
+    // 脖子分摊：相对各自拖拽前朝向，脖子转角 ≈ 头的一半（share 0.5）
+    const headDelta = headQ0.angleTo(head.getWorldQuaternion(new Quaternion()));
+    const neckDelta = neckQ0.angleTo(neck.getWorldQuaternion(new Quaternion()));
+    expect(neckDelta).toBeGreaterThan(headDelta * 0.3);
+    expect(neckDelta).toBeLessThan(headDelta * 0.7);
+
+    // 松手：重坐内化——球被移动，注视方向（颈→头原点）跟到重坐后的球方向、且确实被拖拽带走。
+    // 注视球编码瞄准方向而非朝向：twist（绕注视轴分量）表达不了，松手丢失（spec 已注明）——
+    // 不断言「头朝向 = 环朝向」（那是 twist 保留，物理上做不到），断言注视方向保持
+    const ball0 = h.target.getWorldPosition(new Vector3());
+    h.rings!.endExternalDrag();
+    rig.update(0);
+    ctl.update();
+    scene.updateMatrixWorld(true);
+    const neckPos = neck.getWorldPosition(new Vector3());
+    const ball1 = h.target.getWorldPosition(new Vector3());
+    const aim1 = head.getWorldPosition(new Vector3()).sub(neckPos).normalize();
+    expect(ball1.distanceTo(ball0)).toBeGreaterThan(0.05); // 球被重坐
+    expect(aim1.angleTo(ball1.sub(neckPos).normalize())).toBeLessThan(0.05); // CCD 瞄准新球位
+    expect(aimBefore.angleTo(aim1)).toBeGreaterThan(1.2); // 注视方向被拖拽带走（本用例 ≈90°）
+    ctl.dispose();
+  });
+
+  it('lookAt 缺省（无 rotateShare）：纯位置控制点，E 模式也不出环', () => {
+    const { rig } = buildRig();
+    const { scene, camera, dom } = makeCtx(rig);
+    const driver = makeFakeDriver();
+    const ctl = createSkeletonControls({
+      rig, scene, camera, dom, manipulator: driver,
+      controls: [{ kind: 'lookAt', name: 'head', rootBone: 'Neck', endBone: 'Head' }],
+    });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    expect(h.rings).toBeNull();
+    // E 模式选中后仍 attach 平移通道（纯位置控制点不受模式影响是现行为）
+    ctl.setManipulatorMode('rotate');
+    dom.fire('pointerdown', clientFor(camera, h.target.getWorldPosition(new Vector3())));
+    expect(ctl.getSelected()).toBe('head');
+    expect(driver.attachedTo).toBe(h.target.dragObject);
+    dom.fire('pointerup', {});
+    ctl.dispose();
+  });
+
   it('纯旋转控制点（bone）选中即出环不看 W/E；标记球选中变亮黄（大小恒定），取消选中复原', () => {
     const { rig } = buildRig();
     const { scene, camera, dom } = makeCtx(rig);

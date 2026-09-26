@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import GUI from 'lil-gui';
 import type { CCDIkModifier } from '@dreamerbird/threeik';
 import {
@@ -87,8 +86,10 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             rootRotation: true,
             pole: { color: 0x66ffcc, position: [-0.38, 0.98, -0.2] },
           },
-          // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后
-          { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, position: [0, 1.7, 0.9] },
+          // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后。
+          // rotateShare：单控制点双通道——W 拖注视球，E 出头骨环（拖环 = 头转 60% + 脖子跟转 40%，
+          // 松手自动重坐注视球保持朝向，无需接线）
+          { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, position: [0, 1.7, 0.9], rotateShare: 0.4 },
         ],
       });
       Object.assign((window as unknown as { __threeik: Record<string, unknown> }).__threeik, { ctl });
@@ -162,7 +163,9 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
           f.add(mod as CCDIkModifier, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
         }
       }
-      // 直接掰骨（胸口/脖子）：旋转专用控制点，选中即出环（不看 W/E）
+      // 直接掰骨（胸口/脖子）：旋转专用控制点，选中即出环（不看 W/E）。
+      // 头环不列在此：它的分摊 modifier 由 head 控制点内部 gating 自管（只在拖拽期间激活），
+      // 手动常开会与注视 CCD 互锁钉死头部
       const fBone = gui.addFolder('直接掰骨');
       for (const [i, name] of ['胸口', '脖子'].entries()) {
         fBone.add(bones[i]!.modifier, 'active').name(name);

@@ -98,3 +98,44 @@ describe('CopyTransformModifier', () => {
     expect(warnings.length).toBe(1);
   });
 });
+
+describe('CopyTransformModifier · parentShare 旋转分摊', () => {
+  // Hips → Neck → Head：分摊作用在「Head 的增量 → Neck 分担一份」
+  function buildNeckRig() {
+    const hips = new Bone(); hips.name = 'Hips'; hips.position.set(0, 1, 0);
+    const neck = new Bone(); neck.name = 'Neck'; neck.position.set(0, 0.4, 0);
+    const head = new Bone(); head.name = 'Head'; head.position.set(0, 0.15, 0);
+    hips.add(neck); neck.add(head);
+    return new SkeletonRig(hips);
+  }
+
+  it('parentShare=0.5：世界增量对半分给父骨，本骨世界朝向仍精确等于期望', () => {
+    const rig = buildNeckRig();
+    const ref = new Object3D();
+    ref.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2); // 世界 yaw 90°
+    rig.addModifier(new CopyTransformModifier([{
+      applyBone: 'Head', referenceType: 'object', referenceObject: ref, parentShare: 0.5,
+    }]));
+    rig.update(0.016);
+    // 本骨世界朝向 = 期望（任意分摊比例下精确，归一化后比较——Float32 存储，见上方偏差4注释）
+    const headG = rig.getGlobalPoseQuaternion(rig.boneIndex('Head'), new Quaternion());
+    expect(headG.normalize().angleTo(ref.quaternion)).toBeLessThan(1e-4);
+    // rest 全单位 → D = 90° yaw，父骨承担一半 = 45°
+    const neckG = rig.getGlobalPoseQuaternion(rig.boneIndex('Neck'), new Quaternion());
+    expect(neckG.normalize().angleTo(new Quaternion())).toBeCloseTo(Math.PI / 4, 3);
+  });
+
+  it('parentShare 缺省：父骨不动（现状不变）', () => {
+    const rig = buildNeckRig();
+    const ref = new Object3D();
+    ref.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
+    rig.addModifier(new CopyTransformModifier([{
+      applyBone: 'Head', referenceType: 'object', referenceObject: ref,
+    }]));
+    rig.update(0.016);
+    const headG = rig.getGlobalPoseQuaternion(rig.boneIndex('Head'), new Quaternion());
+    expect(headG.normalize().angleTo(ref.quaternion)).toBeLessThan(1e-4);
+    const neckG = rig.getGlobalPoseQuaternion(rig.boneIndex('Neck'), new Quaternion());
+    expect(neckG.normalize().angleTo(new Quaternion())).toBeLessThan(1e-6);
+  });
+});

@@ -13,6 +13,15 @@ export interface BoneControlSpec extends ControlSpecBase {
   markerBone?: string;
   /** 旋转环半径（默认 defaults.ringRadius）；胸口这类大关节可以加大 */
   ringRadius?: number;
+  /** 旋转增量分摊给父骨的比例（0–1）：>0 时进入分摊模式——拖环时父骨先转 share 份、
+   *  本骨补足剩余（头环带脖子这类解剖学分节）。与默认 FK 掰骨的三点差异：
+   *  1. 分摊 modifier 只在拖拽期间激活（松手即关闭）——常开会让「环镜像求解结果 +
+   *     CopyTransform 回写」形成反馈钉死，挡住同链求解器（注视球/IK）；
+   *  2. 环不做 FK 朝向携带（非拖拽时镜像关节求解朝向）；
+   *  3. 松手后姿势由下游求解器接手维持——设计给「同链有求解器」的场景（如 lookAt，
+   *     松手时把注视球重坐到新朝向即可保持）；单独使用松手即回弹。绕注视轴的纯扭转
+   *  （roll）无法被注视球表达，松手后丢失 */
+  shareWithParent?: number;
 }
 
 export interface BoneControlHandle extends ControlHandleBase {
@@ -21,6 +30,10 @@ export interface BoneControlHandle extends ControlHandleBase {
   readonly rings: RotateRings;
   /** 关节处的小标记球（纯选中入口，不可拖；两种模式都常驻） */
   readonly marker: DragTarget;
+  /** 环拖拽生命周期回调（分摊模式内部 gating 之后触发）——宿主接线用，
+   *  如 start 快照朝向、end 把注视球按拖拽增量重坐到新朝向 */
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
 /** 直接掰骨（FK 旋转）：一副旋转环绑在指定骨头上，拖环 = 转这根骨（CopyTransform 只拷旋转）。
@@ -32,6 +45,7 @@ export interface BoneControlHandle extends ControlHandleBase {
  *  头部注视之前，让 CCD 随后把头重新瞄准）。 */
 export function buildBoneControl(ctx: ControlBuildContext, spec: BoneControlSpec): BuiltControl {
   const bone = ctx.bone(spec.bone);
+  const share = spec.shareWithParent ?? 0;
   const markerBone = spec.markerBone ? ctx.bone(spec.markerBone) : bone;
   const marker = new DragTarget(ctx.camera, ctx.dom, markerBone.getWorldPosition(new Vector3()), spec.color ?? 0x88ddff, ctx.dragControl, spec.ballRadius ?? ctx.defaults.ballRadius);
   marker.setMarkerMode(true); // 永远是标记：不可拖，点击 = 选中
@@ -39,14 +53,27 @@ export function buildBoneControl(ctx: ControlBuildContext, spec: BoneControlSpec
   marker.onPress = () => ctx.select(spec.name);
   ctx.scene.add(marker);
 
-  const rings = new RotateRings({ ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius });
+  const rings = new RotateRings({
+    ringRadius: spec.ringRadius ?? ctx.defaults.ringRadius,
+    // 分摊模式隐藏视角环（E）：beginExternalDrag 对视角环不发 onDragStart，gating 不会激活，给了也是死控制
+    viewRing: !share,
+  });
   rings.setJoint(bone);
-  if (bone.parent) rings.setOrientationCarry(bone.parent); // FK 语义：相对父骨携带（弯腰时胸口/脖子跟着相对转）
+  // FK 携带 vs 镜像跟随：分摊模式下环镜像关节求解朝向（非拖拽时），否则 CopyTransform 回写
+  // 会拿固定局部偏移每帧压过下游求解器（注视球被钉死）
+  if (bone.parent && !share) rings.setOrientationCarry(bone.parent);
   ctx.scene.add(rings);
 
   const modifier = new CopyTransformModifier([{
     applyBone: spec.bone, referenceType: 'object', referenceObject: rings, copyPosition: false, copyRotation: true,
+    parentShare: share,
   }]);
+  if (share) {
+    // 分摊 modifier 只在拖拽期间激活（见 spec 注释）；松手关闭后姿势归下游求解器
+    modifier.active = false;
+    rings.onDragStart = () => { modifier.active = true; handle.onDragStart?.(); };
+    rings.onDragEnd = () => { modifier.active = false; handle.onDragEnd?.(); };
+  }
 
   const handle: BoneControlHandle = {
     name: spec.name, kind: 'bone', modifier, rings, marker,

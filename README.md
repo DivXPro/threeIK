@@ -99,6 +99,10 @@ ctl.update(); // 携带 → 环跟随 → 引导线 → 操纵器屏幕恒定大
 
 五种内置 kind：`root`（重心）、`limb`（四肢 TwoBone + pole 肘/膝朝向）、`chain`（脊柱 FABRIK）、`bone`（直接掰骨 FK）、`lookAt`（注视 CCD）。同骨架上多个控制点的 modifier 求解顺序由装配器按骨深度自动排（浅的先解）。`ctl.get(name)` 取句柄：钳制参数（`setReachScale`/`setKeepAlive` 等）、`setActive` 开关都在句柄上。自定义控制点用 `registerControlKind` 注册，走同一装配管线。
 
+`bone` 的变体：`shareWithParent: 0.4` 进入分摊模式——拖环时父骨先转 40%、本骨补足剩余（解剖学分节旋转）。分摊 modifier 只在拖拽期间激活（常开会与同链求解器反馈互锁），松手即关闭、姿势归下游求解器接手；句柄的 `onDragStart`/`onDragEnd` 回调供宿主接线保持姿势（如重坐注视球）。单独使用松手即回弹。
+
+头部通常不需要单独声明 `bone` 点：`lookAt` 加 `rotateShare: 0.4` 即合成单控制点双通道——W 拖注视球（CCD），E 出头骨环（分摊旋转），松手自动把注视球绕颈根按拖拽增量重坐、保持朝向，无需任何接线。
+
 ### 换模型
 
 库不绑定模型，任何单根骨骼树都行。换模型 = 重建：

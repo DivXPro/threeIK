@@ -32,7 +32,9 @@ export class TransformControlsDriver implements ManipulatorDriver {
 
   constructor(camera: Camera, scene: Object3D, dom: DragDom, dragControl?: DragControl) {
     this.dragControl = dragControl;
-    this.controls = new TransformControls(camera, dom as unknown as HTMLElement);
+    // 库不依赖 DOM lib（CI 干净环境无 HTMLElement 全局名）：参数类型从 TC 构造签名反解，
+    // 不在本文件直接引 DOM 类型名
+    this.controls = new TransformControls(camera, dom as unknown as ConstructorParameters<typeof TransformControls>[1]);
     const withHelper = this.controls as unknown as { getHelper?: () => Object3D };
     // r169+：getHelper() 返回挂场景的 helper；更早版本 TC 本身就是 Object3D
     this.helper = typeof withHelper.getHelper === 'function' ? withHelper.getHelper() : (this.controls as unknown as Object3D);

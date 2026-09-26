@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Bone, MeshBasicMaterial, Object3D, Quaternion, Scene, Vector3 } from 'three';
 import { SkeletonRig } from '../../src/core/skeleton-rig';
 import { createSkeletonControls, registerControlKind } from '../../src/controls';
-import type { BoneControlHandle, BuiltControl, ChainControlHandle, ControlHandleBase, HotkeyEvent, HotkeyMap, HotkeyTarget, LimbControlHandle, ManipulatorMode, RootControlHandle } from '../../src/controls';
+import type { BoneControlHandle, BuiltControl, ChainControlHandle, ControlHandleBase, HotkeyEvent, HotkeyMap, HotkeyTarget, LimbControlHandle, LookAtControlHandle, ManipulatorMode, RootControlHandle } from '../../src/controls';
 import { DragTarget, MARKER_SELECTED_COLOR } from '../../src/controls/drag-target';
 import { RotateRings } from '../../src/controls/rotate-rings';
 import { makeCamera, makeDomStub, makeFakeDriver } from './test-utils';

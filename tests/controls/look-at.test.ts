@@ -26,6 +26,20 @@ function makeCtx(container: Object3D) {
 
 const FACING = new Vector3(0, 0, 1);
 
+/** Y Bot 放置形态:骨骼链在等比缩放容器里(模型单位 = 世界/scale,如 0.026 → 38.5×) */
+function buildScaledRig(scale = 0.026) {
+  const m = 1 / scale;
+  const container = new Object3D();
+  const hips = new Bone(); hips.name = 'Hips'; hips.position.set(0, 1 * m, 0);
+  const spine = new Bone(); spine.name = 'Spine'; spine.position.set(0, 0.15 * m, 0); hips.add(spine);
+  const neck = new Bone(); neck.name = 'Neck'; neck.position.set(0, 0.35 * m, 0); spine.add(neck);
+  const head = new Bone(); head.name = 'Head'; head.position.set(0, 0.15 * m, 0); neck.add(head);
+  container.scale.setScalar(scale);
+  container.add(hips);
+  container.updateMatrixWorld(true);
+  return { rig: new SkeletonRig(container), container, neck, head };
+}
+
 /** 头骨世界四元数的骨轴(+Y)偏离竖直的角度(度) */
 function tiltDeg(bone: Bone): number {
   const up = new Vector3(0, 1, 0).applyQuaternion(bone.getWorldQuaternion(new Quaternion()));
@@ -139,6 +153,47 @@ describe('lookAt 注视语义:面部追球,进场零跳动', () => {
     const ballDir = ctl.get<LookAtControlHandle>('head')!.target.getWorldPosition(new Vector3())
       .sub(head.getWorldPosition(new Vector3()));
     expect(dirAngleDeg(ballDir, gazeDir)).toBeLessThan(2);
+    ctl.dispose();
+  });
+
+  it('容器等比缩放(Y Bot 0.026 放置形态):装配 + 逐帧求解零跳动', () => {
+    const { rig, container, neck, head } = buildScaledRig(0.026);
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx);
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    // 回归:endBoneLength 若按世界单位进 rig 空间,球(28 单位外)与虚拟凝视点(0.35)
+    // 不同距,CCD 够不着把头拧去凑——0.1.1 在 Y Bot 上折 ~23°
+    expect(tiltDeg(neck)).toBeLessThan(0.5);
+    expect(tiltDeg(head)).toBeLessThan(0.5);
+    ctl.dispose();
+  });
+
+  it('容器等比缩放:球与头骨世界距离恒为半径', () => {
+    const { rig, container, head } = buildScaledRig(0.026);
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx);
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    for (let i = 0; i < 5; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const d = h.target.getWorldPosition(new Vector3()).distanceTo(head.getWorldPosition(new Vector3()));
+    expect(d).toBeCloseTo(0.35, 2);
+    ctl.dispose();
+  });
+
+  it('容器等比缩放:拖球后面部追球收敛(非拧头凑球)', () => {
+    const { rig, container, head } = buildScaledRig(0.026);
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx);
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const headPos = () => head.getWorldPosition(new Vector3());
+    const goal = headPos().add(new Vector3(0.25, 0.1, 0.3));
+    h.target.moveTo(goal);
+    for (let i = 0; i < 20; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const gaze = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    const toBall = h.target.getWorldPosition(new Vector3()).sub(headPos());
+    expect(dirAngleDeg(gaze, toBall)).toBeLessThan(3);
     ctl.dispose();
   });
 });

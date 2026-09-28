@@ -306,6 +306,17 @@ export class SkeletonRig {
     return out.copy(worldPos).applyMatrix4(_m.copy(parentObj.matrixWorld).invert());
   }
 
+  /** 世界长度 → rig 空间长度（按根骨父对象世界缩放的 X 分量换算）。
+   *  放置组等比缩放(如 Y Bot 0.026)时精确;非等比是病理场景,取 |X| 兜底。
+   *  求解器内部一切长度都是 rig 空间单位,世界语义的尺寸必须过这道换算 */
+  worldToRigLength(worldLen: number): number {
+    const parentObj = this.bones[0]!.parent;
+    if (!parentObj) return worldLen;
+    parentObj.updateWorldMatrix(true, false);
+    const s = Math.abs(parentObj.getWorldScale(_v).x);
+    return s > 1e-12 ? worldLen / s : worldLen;
+  }
+
   computeMotionScaleFromBone(name: string): number {
     const i = this.boneIndex(name);
     this.getGlobalRestPosition(i, _v);

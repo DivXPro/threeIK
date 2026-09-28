@@ -82,11 +82,13 @@ export function buildLookAtControl(ctx: ControlBuildContext, spec: LookAtControl
     rootBone: spec.rootBone,
     endBone: spec.endBone,
     target,
-    // 虚拟凝视点:求解瞄准「端骨姿态 × 凝视轴 × R」的链端延伸,与球同距——视线对准即零误差
+    // 虚拟凝视点:求解瞄准「端骨姿态 × 凝视轴 × R」的链端延伸,与球同距——视线对准即零误差。
+    // endBoneLength 是 rig 空间长度:radius 是世界语义,容器带缩放(Y Bot 0.026)时必须换算,
+    // 否则球(28 单位外)与凝视点(0.35)不同距,CCD 够不着把头拧去凑——进场即折头
     extendEndBone: true,
     endBoneDirection: 'custom' as const,
     endBoneDirectionVector: gazeLocal,
-    endBoneLength: radius,
+    endBoneLength: ctx.rig.worldToRigLength(radius),
   }];
   const modifier = new CCDIkModifier(chainConfig(), { maxIterations: spec.maxIterations ?? 10, angularDeltaLimit: Math.PI }); // 同 chain：π = 关闭逐帧转角预算
 

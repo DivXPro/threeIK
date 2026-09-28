@@ -87,9 +87,10 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
             pole: { color: 0x66ffcc, position: [-0.38, 0.98, -0.2] },
           },
           // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后。
+          // 注视 = 面部追球:球缺省生成在当前视线上(进场零跳动,保持 T 姿势);
           // rotateShare：单控制点双通道——W 拖注视球，E 出头骨环（拖环 = 头转 60% + 脖子跟转 40%，
-          // 松手自动重坐注视球保持朝向，无需接线）
-          { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, position: [0, 1.7, 0.9], rotateShare: 0.4 },
+          // 松手自动把球摆回当前视线保持朝向，无需接线）
+          { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, rotateShare: 0.4 },
         ],
       });
       Object.assign((window as unknown as { __threeik: Record<string, unknown> }).__threeik, { ctl });
@@ -184,9 +185,8 @@ export function createIkTab(ctx: PlaygroundContext): TabHandle {
       fClamp.add(reachInfo, '腿').name('腿链长(m,实测)').disable();
       fClamp.add(reachInfo, '脊柱').name('脊柱链长(m,实测)').disable();
       const fHead = fClamp.addFolder('头部注视球');
-      // 半径下限 0.3：CCD 端骨（Head 原点）离颈 ~0.12m，球太近会进入可达域，
-      // 求解从"纯注视瞄准"退化成"摆放端骨"，头会拧去够球
-      fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('半径(m)').onChange(applyHeadCone);
+      // 注视 = 面部追球(虚拟凝视点与球同距):任何半径都可达,不存在"球进可达域头拧去够球"的退化
+      fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('注视距离(m)').onChange(applyHeadCone);
       fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
       gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
     },

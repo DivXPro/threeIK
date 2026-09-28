@@ -107,11 +107,12 @@ describe('createSkeletonControls', () => {
     });
     scene.updateMatrixWorld(true);
     const fore = rig.getBoneAt(rig.boneIndex('ForeL'));
-    const neck = rig.getBoneAt(rig.boneIndex('Neck'));
+    const headBone = rig.getBoneAt(rig.boneIndex('Head'));
     const arm = ctl.get<LimbControlHandle>('arm')!;
     // 臂 rest 伸直：肘钉在链轴上，pole 球贴着肘（仅最小显示偏移 0.02）
     expect(arm.pole.ball.getWorldPosition(new Vector3()).distanceTo(fore.getWorldPosition(new Vector3()))).toBeLessThan(0.03);
-    expect(ctl.get('head')!.target!.getWorldPosition(new Vector3()).distanceTo(neck.getWorldPosition(new Vector3()))).toBeCloseTo(0.35, 5);
+    // 注视球恒距锚在头骨（脸前 R 处）
+    expect(ctl.get('head')!.target!.getWorldPosition(new Vector3()).distanceTo(headBone.getWorldPosition(new Vector3()))).toBeCloseTo(0.35, 5);
     ctl.dispose();
   });
 
@@ -1026,7 +1027,9 @@ describe('createSkeletonControls', () => {
     ctl.update();
     const headQ0 = head.getWorldQuaternion(new Quaternion());
     const neckQ0 = neck.getWorldQuaternion(new Quaternion());
-    const aimBefore = head.getWorldPosition(new Vector3()).sub(neck.getWorldPosition(new Vector3())).normalize();
+    // 注视方向 = 端骨姿态 × 凝视轴（本 rig 全竖直、facing 缺省 (0,0,-1) → 凝视轴 = 骨局部 -Z）
+    const gazeOf = () => new Vector3(0, 0, -1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    const aimBefore = gazeOf();
 
     // 直驱环（手动序列，同 bone 分摊测试）：绕世界 Y 转 90°
     h.rings!.beginExternalDrag(1);
@@ -1043,7 +1046,7 @@ describe('createSkeletonControls', () => {
     expect(neckDelta).toBeGreaterThan(headDelta * 0.3);
     expect(neckDelta).toBeLessThan(headDelta * 0.7);
 
-    // 松手：重坐内化——球被移动，注视方向（颈→头原点）跟到重坐后的球方向、且确实被拖拽带走。
+    // 松手：重坐内化——球被摆回当前视线上;CCD 接手后面部保持拖拽朝向。
     // 注视球编码瞄准方向而非朝向：twist（绕注视轴分量）表达不了，松手丢失（spec 已注明）——
     // 不断言「头朝向 = 环朝向」（那是 twist 保留，物理上做不到），断言注视方向保持
     const ball0 = h.target.getWorldPosition(new Vector3());
@@ -1051,11 +1054,11 @@ describe('createSkeletonControls', () => {
     rig.update(0);
     ctl.update();
     scene.updateMatrixWorld(true);
-    const neckPos = neck.getWorldPosition(new Vector3());
+    const headPos = head.getWorldPosition(new Vector3());
     const ball1 = h.target.getWorldPosition(new Vector3());
-    const aim1 = head.getWorldPosition(new Vector3()).sub(neckPos).normalize();
+    const aim1 = gazeOf();
     expect(ball1.distanceTo(ball0)).toBeGreaterThan(0.05); // 球被重坐
-    expect(aim1.angleTo(ball1.sub(neckPos).normalize())).toBeLessThan(0.05); // CCD 瞄准新球位
+    expect(aim1.angleTo(ball1.sub(headPos).normalize())).toBeLessThan(0.05); // CCD 面部追新球位
     expect(aimBefore.angleTo(aim1)).toBeGreaterThan(1.2); // 注视方向被拖拽带走（本用例 ≈90°）
     ctl.dispose();
   });

@@ -1,7 +1,8 @@
 import { Vector3 } from 'three';
 
 export type BoneAxis = '+x' | '-x' | '+y' | '-y' | '+z' | '-z';
-export type BoneDirection = BoneAxis | 'from-parent';
+/** custom = 任意骨局部向量（配 IKChainConfig.endBoneDirectionVector 使用，如注视轴） */
+export type BoneDirection = BoneAxis | 'from-parent' | 'custom';
 export type SecondaryDirection = 'none' | BoneAxis | 'custom';
 export type RotationAxis = 'x' | 'y' | 'z' | 'all' | 'custom';
 

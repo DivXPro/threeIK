@@ -23,6 +23,8 @@ export interface IKChainConfig {
   target: Object3D | string;
   extendEndBone?: boolean;
   endBoneDirection?: BoneDirection;
+  /** endBoneDirection = 'custom' 时的骨局部向量（如注视轴:rest 下面部朝向反推） */
+  endBoneDirectionVector?: Vector3;
   endBoneLength?: number;
   joints?: Record<string, JointConfig>;
 }
@@ -112,8 +114,11 @@ const _q4 = new Quaternion();
 const _q5 = new Quaternion();
 const _q6 = new Quaternion(); // 专用：JointSetting.getLimitedRotation（逐关节循环内安全）
 
-/** Godot: IKModifier3D::get_bone_axis（固定 mutableBoneAxes=true） */
-export function getBoneAxis(rig: SkeletonRig, bone: number, direction: BoneDirection, out: Vector3): Vector3 {
+/** Godot: IKModifier3D::get_bone_axis（固定 mutableBoneAxes=true）；'custom' 为移植方扩展（任意骨局部轴） */
+export function getBoneAxis(rig: SkeletonRig, bone: number, direction: BoneDirection, out: Vector3, customVector?: Vector3): Vector3 {
+  if (direction === 'custom') {
+    return customVector ? out.copy(customVector) : out.set(0, 0, 0);
+  }
   if (direction === 'from-parent') {
     // axis = restQuat(bone)^-1 * posePosition(bone)，归一化
     rig.getRestQuaternion(bone, _q1);
@@ -136,6 +141,7 @@ export class IKChain {
   readonly endBone: number;
   readonly extendEndBone: boolean;
   readonly endBoneDirection: BoneDirection;
+  readonly endBoneDirectionVector: Vector3 | undefined;
   readonly endBoneLength: number;
   simulated = false;
 
@@ -144,6 +150,7 @@ export class IKChain {
     this.endBone = rig.boneIndex(config.endBone);
     this.extendEndBone = config.extendEndBone ?? false;
     this.endBoneDirection = config.endBoneDirection ?? 'from-parent';
+    this.endBoneDirectionVector = config.endBoneDirectionVector?.clone();
     this.endBoneLength = config.endBoneLength ?? 0;
 
     // 从 endBone 沿父链走到 rootBone（root 必须是 end 的严格祖先）
@@ -184,7 +191,7 @@ export class IKChain {
       rig.getGlobalPosePosition(this.joints[i]!, this.chain[i]!);
       const last = i === this.joints.length - 1;
       if (last && extendsEnd) {
-        getBoneAxis(rig, this.endBone, this.endBoneDirection, _v1);
+        getBoneAxis(rig, this.endBone, this.endBoneDirection, _v1, this.endBoneDirectionVector);
         if (isZeroApprox(_v1.lengthSq())) {
           this.solverInfos[i] = null;
           continue;

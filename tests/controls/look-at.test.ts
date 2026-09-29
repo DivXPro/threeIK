@@ -3,7 +3,7 @@ import { Bone, Object3D, Quaternion, Scene, Vector3 } from 'three';
 import { SkeletonRig } from '../../src/core/skeleton-rig';
 import { createSkeletonControls } from '../../src/controls';
 import type { LookAtControlHandle, LookAtControlSpec } from '../../src/controls';
-import { makeCamera, makeDomStub } from './test-utils';
+import { makeCamera, makeDomStub, makeFakeDriver } from './test-utils';
 
 /** 迷你骨架:Hips(0,1,0) → Spine(0,1.15,0) → Neck(0,1.5,0) → Head(0,1.65,0),全竖直,面朝 +Z */
 function buildRig() {
@@ -194,6 +194,209 @@ describe('lookAt 注视语义:面部追球,进场零跳动', () => {
     const gaze = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
     const toBall = h.target.getWorldPosition(new Vector3()).sub(headPos());
     expect(dirAngleDeg(gaze, toBall)).toBeLessThan(3);
+    ctl.dispose();
+  });
+});
+
+/** joystick 模式:球显示在头顶当摇杆帽,没有任何「脸追的点」——摇杆偏角经最短弧增量
+ *  直接驱动头颈分摊旋转(CopyTransform 常开保持,与 E 环同款机制)。映射约定(飞机杆):
+ *  前推低头、后拉仰头、左右推左右转,偏角 1:1;映射恒在视线锥内(锥角即摇杆可推半角) */
+describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋转', () => {
+  const UP = new Vector3(0, 1, 0);
+  /** 面朝 +Z 时的右手边:facing × up = -X */
+  const RIGHT = new Vector3(-1, 0, 0);
+
+  it('装配零跳动:直立骨架逐帧求解头颈不动,球显示在头顶正上方', () => {
+    const { rig, container, neck, head } = buildRig();
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx, { joystick: true });
+    for (let i = 0; i < 5; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    expect(tiltDeg(neck)).toBeLessThan(0.5);
+    expect(tiltDeg(head)).toBeLessThan(0.5);
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const headPos = head.getWorldPosition(new Vector3());
+    const ballDir = h.target.getWorldPosition(new Vector3()).sub(headPos);
+    expect(dirAngleDeg(ballDir, UP)).toBeLessThan(2);
+    expect(ballDir.length()).toBeCloseTo(0.35, 3);
+    ctl.dispose();
+  });
+
+  it('预歪头装配零跳动,球偏在头偏向的一侧(球位 = 朝向指示器)', () => {
+    const { rig, container, head } = buildRig();
+    // 头向左拧 40°(+Y 轴旋转把 gaze 从 +Z 带向 +X)
+    head.quaternion.setFromAxisAngle(UP, (40 * Math.PI) / 180);
+    container.updateMatrixWorld(true);
+    const ctx = makeCtx(container);
+    const q0 = head.getWorldQuaternion(new Quaternion());
+    const ctl = assemble(rig, ctx, { joystick: true });
+    for (let i = 0; i < 5; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const q1 = head.getWorldQuaternion(new Quaternion());
+    expect((q0.angleTo(q1) * 180) / Math.PI).toBeLessThan(0.5);
+    // 球应在头顶偏向 +X 一侧,偏离正顶的角度 ≈ 头的偏角 40°
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const ballDir = h.target.getWorldPosition(new Vector3())
+      .sub(head.getWorldPosition(new Vector3())).normalize();
+    expect(dirAngleDeg(ballDir, UP)).toBeGreaterThan(38);
+    expect(dirAngleDeg(ballDir, UP)).toBeLessThan(42);
+    const horiz = new Vector3(ballDir.x, 0, ballDir.z).normalize();
+    expect(dirAngleDeg(horiz, new Vector3(1, 0, 0))).toBeLessThan(3);
+    ctl.dispose();
+  });
+
+  it('前推低头:球向 facing 方向推 30°,面部朝下偏 30°(1:1)', () => {
+    const { rig, container, head } = buildRig();
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx, { joystick: true });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const a = (30 * Math.PI) / 180;
+    const goal = head.getWorldPosition(new Vector3())
+      .addScaledVector(UP, Math.cos(a) * 0.35)
+      .addScaledVector(FACING, Math.sin(a) * 0.35);
+    h.target.moveTo(goal);
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const gaze = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    const expected = FACING.clone().multiplyScalar(Math.cos(a)).addScaledVector(UP, -Math.sin(a));
+    expect(dirAngleDeg(gaze, expected)).toBeLessThan(2);
+    ctl.dispose();
+  });
+
+  it('右推右转:球向右手边推 30°,面部右转 30°', () => {
+    const { rig, container, head } = buildRig();
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx, { joystick: true });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const a = (30 * Math.PI) / 180;
+    const goal = head.getWorldPosition(new Vector3())
+      .addScaledVector(UP, Math.cos(a) * 0.35)
+      .addScaledVector(RIGHT, Math.sin(a) * 0.35);
+    h.target.moveTo(goal);
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const gaze = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    const expected = FACING.clone().multiplyScalar(Math.cos(a)).addScaledVector(RIGHT, Math.sin(a));
+    expect(dirAngleDeg(gaze, expected)).toBeLessThan(2);
+    ctl.dispose();
+  });
+
+  it('松手后保持:base 姿势弯腰,头世界朝向仍钉在拖拽结果上(视线保持)', () => {
+    const { rig, container, head } = buildRig();
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx, { joystick: true, rotateShare: 0.4 });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const a = (30 * Math.PI) / 180;
+    const goal = head.getWorldPosition(new Vector3())
+      .addScaledVector(UP, Math.cos(a) * 0.35)
+      .addScaledVector(FACING, Math.sin(a) * 0.35);
+    h.target.moveTo(goal);
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const gazeAfterDrag = new Vector3(0, 0, 1)
+      .applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    // 模拟弯腰:脊柱 base 前弯 30°(其他控制点/外部改姿势的等价物)
+    rig.setBasePoseRotation(
+      rig.boneIndex('Spine'),
+      new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), (30 * Math.PI) / 180),
+    );
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const gazeAfterBend = new Vector3(0, 0, 1)
+      .applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    expect(dirAngleDeg(gazeAfterBend, gazeAfterDrag)).toBeLessThan(2);
+    ctl.dispose();
+  });
+
+  it('缩放容器(Y Bot 0.026):装配零跳动——无距离概念,天然免疫 0.1.2 那类坑', () => {
+    const { rig, container, neck, head } = buildScaledRig(0.026);
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx, { joystick: true });
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    expect(tiltDeg(neck)).toBeLessThan(0.5);
+    expect(tiltDeg(head)).toBeLessThan(0.5);
+    ctl.dispose();
+  });
+
+  it('锥钳制:球推过 105° 被钳住,头不反拧(gaze 不超出视线锥)', () => {
+    const { rig, container, head } = buildRig();
+    const ctx = makeCtx(container);
+    const ctl = assemble(rig, ctx, { joystick: true });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    // 往头的后下方推(与 up 夹角 150°,超出 105° 锥)
+    const a = (150 * Math.PI) / 180;
+    const goal = head.getWorldPosition(new Vector3())
+      .addScaledVector(UP, Math.cos(a) * 0.35)
+      .addScaledVector(FACING, -Math.sin(a) * 0.35);
+    h.target.moveTo(goal);
+    for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const ballDir = h.target.getWorldPosition(new Vector3())
+      .sub(head.getWorldPosition(new Vector3()));
+    expect(dirAngleDeg(ballDir, UP)).toBeLessThanOrEqual(105.5);
+    const gaze = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    expect(dirAngleDeg(gaze, FACING)).toBeLessThanOrEqual(106);
+    ctl.dispose();
+  });
+
+  it('roll 保留:预歪头(绕视线轴 roll 25°)装配不被抹平,球仍在正头顶', () => {
+    const { rig, container, head } = buildRig();
+    head.quaternion.setFromAxisAngle(FACING, (25 * Math.PI) / 180);
+    container.updateMatrixWorld(true);
+    const ctx = makeCtx(container);
+    const q0 = head.getWorldQuaternion(new Quaternion());
+    const ctl = assemble(rig, ctx, { joystick: true });
+    for (let i = 0; i < 5; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const q1 = head.getWorldQuaternion(new Quaternion());
+    expect((q0.angleTo(q1) * 180) / Math.PI).toBeLessThan(0.5);
+    // roll 不改变视线方向:球仍在正头顶
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    const ballDir = h.target.getWorldPosition(new Vector3())
+      .sub(head.getWorldPosition(new Vector3()));
+    expect(dirAngleDeg(ballDir, UP)).toBeLessThan(2);
+    ctl.dispose();
+  });
+
+  it('E 环衔接:拖环低头 20° 环赢;松手后参照物吸收朝向,保持接管不回弹,球重摆到前推指示位', () => {
+    const { rig, container, head } = buildRig();
+    const ctx = makeCtx(container);
+    const driver = makeFakeDriver();
+    const ctl = createSkeletonControls({
+      rig, scene: ctx.scene, camera: ctx.camera, dom: ctx.dom,
+      facing: FACING.clone(), hotkeys: false, manipulator: driver,
+      controls: [
+        { kind: 'lookAt', name: 'head', rootBone: 'Neck', endBone: 'Head', joystick: true, rotateShare: 0.4 } as LookAtControlSpec,
+      ],
+    });
+    const h = ctl.get<LookAtControlHandle>('head')!;
+    ctl.select('head');
+    ctl.setManipulatorMode('rotate');
+    expect(driver.attachedTo).toBe(h.rings);
+    // TC 拖环:低头 20°(rings 挂场景顶层,局部 = 世界;绕 +X 正转把 +Z 带向 −Y)
+    const a = (20 * Math.PI) / 180;
+    driver.fireDragStart('X');
+    h.rings!.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), a);
+    driver.fireDragChange();
+    for (let i = 0; i < 5; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const expected = FACING.clone().multiplyScalar(Math.cos(a)).addScaledVector(UP, -Math.sin(a));
+    const gazeDragged = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    expect(dirAngleDeg(gazeDragged, expected)).toBeLessThan(2);
+    // 松手:保持接管,朝向不回弹
+    driver.fireDragEnd();
+    for (let i = 0; i < 5; i++) { rig.update(1 / 60); ctl.update(); }
+    ctx.scene.updateMatrixWorld(true);
+    const gazeAfter = new Vector3(0, 0, 1).applyQuaternion(head.getWorldQuaternion(new Quaternion()));
+    expect(dirAngleDeg(gazeAfter, expected)).toBeLessThan(2);
+    // 球重摆到前推 20° 的指示位(头顶偏 facing 方向)
+    const ballDir = h.target.getWorldPosition(new Vector3())
+      .sub(head.getWorldPosition(new Vector3())).normalize();
+    expect(dirAngleDeg(ballDir, UP)).toBeGreaterThan(18);
+    expect(dirAngleDeg(ballDir, UP)).toBeLessThan(22);
+    const horiz = new Vector3(ballDir.x, 0, ballDir.z).normalize();
+    expect(dirAngleDeg(horiz, FACING)).toBeLessThan(3);
     ctl.dispose();
   });
 });

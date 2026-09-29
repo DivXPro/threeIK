@@ -78,6 +78,9 @@ export class DragTarget extends Object3D implements ExternalDraggable {
   // selected = 标记模式下的选中高亮前提
   /** 命中按下时触发（选中机制用）；无论是否进入拖拽都会调 */
   onPress?: () => void;
+  /** 位置被输入路径改写后触发（指针拖拽 / moveTo / 外部操纵器 reclamp 回写）——
+   *  摇杆式控制点据此做方向映射；锚点携带（carryAlong）不触发（跟随不算输入） */
+  onMoved?: () => void;
   private markerMode = false;
   private selected = false;
   private readonly camera: Camera;
@@ -231,6 +234,7 @@ export class DragTarget extends Object3D implements ExternalDraggable {
     if (parent) parent.worldToLocal(hit);
     this.position.copy(hit);
     this.updateCarryOffset(); // 拖拽即改写相对偏移，松手后按新偏移跟随
+    this.onMoved?.();
   }
 
   /** 编程式移动（外部绑定/自动化测试）：过与指针拖拽相同的约束管线并刷新携带偏移 */
@@ -259,6 +263,7 @@ export class DragTarget extends Object3D implements ExternalDraggable {
    *  回写后携带偏移按实际位置同步刷新 */
   reclamp(): void {
     this.snapIntoConstraints();
+    this.onMoved?.();
   }
 
   /** 外部操纵器接管期间：自身指针拖拽让位（onPress 选中上报保留；markerMode 只挡拖拽，语义不同源） */

@@ -205,6 +205,8 @@ describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋�
   const UP = new Vector3(0, 1, 0);
   /** 面朝 +Z 时的右手边:facing × up = -X */
   const RIGHT = new Vector3(-1, 0, 0);
+  /** 默认摇杆球距(库默认 joystickRadius):球心嵌头顶表面内侧,不悬空 */
+  const JOY_R = 0.16;
 
   it('装配零跳动:直立骨架逐帧求解头颈不动,球显示在头顶正上方', () => {
     const { rig, container, neck, head } = buildRig();
@@ -218,7 +220,7 @@ describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋�
     const headPos = head.getWorldPosition(new Vector3());
     const ballDir = h.target.getWorldPosition(new Vector3()).sub(headPos);
     expect(dirAngleDeg(ballDir, UP)).toBeLessThan(2);
-    expect(ballDir.length()).toBeCloseTo(0.35, 3);
+    expect(ballDir.length()).toBeCloseTo(JOY_R, 3);
     ctl.dispose();
   });
 
@@ -252,8 +254,8 @@ describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋�
     const h = ctl.get<LookAtControlHandle>('head')!;
     const a = (30 * Math.PI) / 180;
     const goal = head.getWorldPosition(new Vector3())
-      .addScaledVector(UP, Math.cos(a) * 0.35)
-      .addScaledVector(FACING, Math.sin(a) * 0.35);
+      .addScaledVector(UP, Math.cos(a) * JOY_R)
+      .addScaledVector(FACING, Math.sin(a) * JOY_R);
     h.target.moveTo(goal);
     for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
     ctx.scene.updateMatrixWorld(true);
@@ -270,8 +272,8 @@ describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋�
     const h = ctl.get<LookAtControlHandle>('head')!;
     const a = (30 * Math.PI) / 180;
     const goal = head.getWorldPosition(new Vector3())
-      .addScaledVector(UP, Math.cos(a) * 0.35)
-      .addScaledVector(RIGHT, Math.sin(a) * 0.35);
+      .addScaledVector(UP, Math.cos(a) * JOY_R)
+      .addScaledVector(RIGHT, Math.sin(a) * JOY_R);
     h.target.moveTo(goal);
     for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
     ctx.scene.updateMatrixWorld(true);
@@ -288,8 +290,8 @@ describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋�
     const h = ctl.get<LookAtControlHandle>('head')!;
     const a = (30 * Math.PI) / 180;
     const goal = head.getWorldPosition(new Vector3())
-      .addScaledVector(UP, Math.cos(a) * 0.35)
-      .addScaledVector(FACING, Math.sin(a) * 0.35);
+      .addScaledVector(UP, Math.cos(a) * JOY_R)
+      .addScaledVector(FACING, Math.sin(a) * JOY_R);
     h.target.moveTo(goal);
     for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
     ctx.scene.updateMatrixWorld(true);
@@ -327,8 +329,8 @@ describe('lookAt joystick 头顶摇杆模式:无目标点,偏角直驱分摊旋�
     // 往头的后下方推(与 up 夹角 150°,超出 105° 锥)
     const a = (150 * Math.PI) / 180;
     const goal = head.getWorldPosition(new Vector3())
-      .addScaledVector(UP, Math.cos(a) * 0.35)
-      .addScaledVector(FACING, -Math.sin(a) * 0.35);
+      .addScaledVector(UP, Math.cos(a) * JOY_R)
+      .addScaledVector(FACING, -Math.sin(a) * JOY_R);
     h.target.moveTo(goal);
     for (let i = 0; i < 10; i++) { rig.update(1 / 60); ctl.update(); }
     ctx.scene.updateMatrixWorld(true);

@@ -14,6 +14,10 @@ export interface ControlsDefaults {
   poleKeepAlive?: number;
   /** 注视球恒距半径，默认 0.35（下限 0.3：CCD 端骨离颈 ~0.12m，再近注视退化成摆放端骨） */
   lookAtRadius?: number;
+  /** 头顶摇杆球离头距离（joystick 模式专用，默认 0.16）：球心嵌头顶表面内侧、不悬空——
+   *  摇杆是纯方向信号（偏角直驱头颈分摊），无 lookAtRadius 的 CCD 距离约束，贴头更自然；
+   *  与 lookAtRadius 语义独立，两者互不影响 */
+  joystickRadius?: number;
   /** 注视方向锥半角（°），默认 105 */
   lookAtAngleDeg?: number;
   /** 根骨（重心）活动球域半径，默认 0.4 */

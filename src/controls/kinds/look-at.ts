@@ -12,7 +12,8 @@ export interface LookAtControlSpec extends ControlSpecBase {
   rootBone: string;
   /** CCD 链端（头） */
   endBone: string;
-  /** 注视距离（锥 min=max，默认 defaults.lookAtRadius）：注视是纯方向语义，球恒贴脸前 R 处 */
+  /** 注视距离（锥 min=max，默认 defaults.lookAtRadius；joystick 模式默认 defaults.joystickRadius）：
+   *  注视是纯方向语义，球恒贴脸前 R 处；摇杆模式复用为「球离头距离」（贴头显示） */
   radius?: number;
   /** 方向锥半角（°，默认 defaults.lookAtAngleDeg）：防拖到脑后头反拧 */
   coneAngleDeg?: number;
@@ -29,7 +30,8 @@ export interface LookAtControlSpec extends ControlSpecBase {
    *  参照物（不可见 Object3D）是朝向真源：装配时镜像端骨当前姿态（零跳动、roll 保留），
    *  拖球时按最短弧增量更新，松手后保持最终朝向（弯腰等带动头部时视线保持）。
    *  缩放容器天然免疫：整条链路没有距离概念（0.1.2 那类世界/rig 换算坑不复存在）。
-   *  radius 在摇杆模式复用为「球离头距离」（显示恒距）；rotateShare 复用为分摊比例 */
+   *  radius 在摇杆模式复用为「球离头距离」（显示恒距，默认 defaults.joystickRadius）；
+   *  rotateShare 复用为分摊比例 */
   joystick?: boolean;
   /** 凝视轴（端骨局部，默认按「rest 姿势下面部朝向 = 角色 facing」反推）：求解瞄准的是
    *  「端骨姿态 × 凝视轴」这条射线——面部追球；缺省推导对任何当前姿势都零跳动 */
@@ -211,7 +213,7 @@ function ballDirToGaze(ballDir: Vector3, facing: Vector3, up: Vector3, right: Ve
 function buildJoystickLookAtControl(ctx: ControlBuildContext, spec: LookAtControlSpec): BuiltControl {
   const endBoneObj = ctx.bone(spec.endBone);
   const share = spec.rotateShare ?? 0;
-  let radius = spec.radius ?? ctx.defaults.lookAtRadius;
+  let radius = spec.radius ?? ctx.defaults.joystickRadius;
   let angleDeg = spec.coneAngleDeg ?? ctx.defaults.lookAtAngleDeg;
   const gazeLocal = spec.gazeAxis
     ? toVec3(spec.gazeAxis).normalize()

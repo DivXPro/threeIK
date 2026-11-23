@@ -65,6 +65,56 @@ describe('TwoBoneIkModifier', () => {
     expect(rig.getBoneAt(0).quaternion.angleTo(first)).toBeLessThan(1e-4);
   });
 
+  it('keeps bone orientation continuous when bending a straight limb toward either side', () => {
+    const rig = buildLeg();
+    const target = makeTarget(0, -2, 0);
+    const pole = makeTarget(0, -1, 1);
+    rig.addModifier(new TwoBoneIkModifier([{
+      rootBone: 'Upper', middleBone: 'Lower', endBone: 'Foot', target, poleTarget: pole, poleDirection: '+z',
+      smoothPoleRoll: true,
+    }]));
+    rig.update(1 / 60);
+    const straightUpper = rig.getGlobalPoseQuaternion(0, new Quaternion());
+    const straightLower = rig.getGlobalPoseQuaternion(1, new Quaternion());
+
+    for (const side of [1, -1]) {
+      pole.position.set(side, -1, 0);
+      target.position.y = -1.997;
+      rig.update(1 / 60);
+      expect(rig.getGlobalPosePosition(1, new Vector3()).x * side).toBeCloseTo(0.055, 3);
+      expect(rig.getGlobalPosePosition(2, new Vector3()).distanceTo(target.position)).toBeLessThan(0.0001);
+      expect(rig.getGlobalPoseQuaternion(0, new Quaternion()).angleTo(straightUpper)).toBeLessThan(0.2);
+      expect(rig.getGlobalPoseQuaternion(1, new Quaternion()).angleTo(straightLower)).toBeLessThan(0.2);
+
+      target.position.y = -2;
+      rig.update(1 / 60);
+      expect(rig.getGlobalPoseQuaternion(0, new Quaternion()).angleTo(straightUpper)).toBeLessThan(0.001);
+    }
+  });
+
+  it('gradually aligns the secondary direction on a clearly bent limb', () => {
+    const rig = buildLeg();
+    const target = makeTarget(0, -2, 0);
+    const pole = makeTarget(0, -1, 1);
+    rig.addModifier(new TwoBoneIkModifier([{
+      rootBone: 'Upper', middleBone: 'Lower', endBone: 'Foot', target, poleTarget: pole, poleDirection: '+z',
+      smoothPoleRoll: true,
+    }]));
+    rig.update(1 / 60);
+    target.position.y = -Math.SQRT2;
+    pole.position.set(1, -1, 0);
+
+    rig.update(1 / 60);
+    const firstSecondary = new Vector3(0, 0, 1).applyQuaternion(rig.getGlobalPoseQuaternion(1, new Quaternion()));
+    expect(firstSecondary.z).toBeGreaterThan(0.95);
+    for (let frame = 0; frame < 30; frame++) rig.update(1 / 60);
+
+    const secondary = new Vector3(0, 0, 1).applyQuaternion(rig.getGlobalPoseQuaternion(1, new Quaternion()));
+    expect(secondary.x).toBeGreaterThan(0.65);
+    expect(Math.abs(secondary.z)).toBeLessThan(0.0001);
+    expect(rig.getGlobalPosePosition(2, new Vector3()).distanceTo(target.position)).toBeLessThan(0.0001);
+  });
+
   it('NaN target is guarded: warns once and leaves bones untouched', () => {
     const rig = buildLeg();
     const target = makeTarget(NaN, NaN, NaN);

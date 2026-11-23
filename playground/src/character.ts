@@ -13,6 +13,34 @@ export interface LoadedCharacter {
   facing: THREE.Vector3;
 }
 
+export interface CharacterPose {
+  modelPosition: THREE.Vector3;
+  bones: Map<string, { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 }>;
+}
+
+export function captureCharacterPose({ rig, root }: LoadedCharacter): CharacterPose {
+  const bones: CharacterPose['bones'] = new Map();
+  for (let i = 0; i < rig.boneCount; i++) {
+    const { name, position, quaternion, scale } = rig.getBoneAt(i);
+    bones.set(name, { position: position.clone(), quaternion: quaternion.clone(), scale: scale.clone() });
+  }
+  return { modelPosition: root.position.clone(), bones };
+}
+
+export function restoreCharacterPose({ rig, root }: LoadedCharacter, pose: CharacterPose): void {
+  root.position.copy(pose.modelPosition);
+  for (let i = 0; i < rig.boneCount; i++) {
+    const bone = rig.getBoneAt(i);
+    const saved = pose.bones.get(bone.name);
+    if (!saved) continue;
+    bone.position.copy(saved.position);
+    bone.quaternion.copy(saved.quaternion);
+    bone.scale.copy(saved.scale);
+  }
+  root.updateWorldMatrix(true, true);
+  rig.captureBasePose();
+}
+
 // X Bot（three.js 示例模型，Mixamo 导出）：灰白机器人、四肢细长无装备遮挡，关节朝向一眼可辨，
 // 比迷彩 Soldier 更容易判断姿势对错。模型局部前方 = +Z，出厂即面朝 +Z 相机，无需旋转。
 const MODEL_URL = '/Xbot.glb';

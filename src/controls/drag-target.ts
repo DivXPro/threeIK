@@ -123,7 +123,7 @@ export class DragTarget extends Object3D implements ExternalDraggable {
     };
     // 监听器保存为字段引用，dispose 可移除（编辑器多视图/页签切换防泄漏）
     this.onPointerDown = (e: DragPointerEvent) => {
-      if (!this.interactive || !this.ball.visible) return;
+      if (!this.interactive || !this.visible || !this.ball.visible) return;
       setNdc(e);
       ray.setFromCamera(ndc, camera);
       // 容差命中：raycast 缩小版球体容易脱靶（尤其触屏），按相机距离给射线一个世界余量

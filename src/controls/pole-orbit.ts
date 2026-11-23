@@ -77,6 +77,7 @@ export class PoleOrbit extends Object3D implements ExternalDraggable {
   private dirHint: Vector3 | null = null; // 首帧前的初始方向来源（spec 位置或默认摆位）
   /** 命中按下时触发（选中机制用；装配器据此认领按下防空白失焦） */
   onPress?: () => void;
+  onDragStart?: () => void;
   /** 径向通道（弯度）：拖拽中半径意图变化超死区时回调（装配层据此沿链轴移动端球）。
    *  角度通道无需回调——求解器下一帧直接读球的世界位置 */
   onRadiusDrag?: (radius: number) => void;
@@ -103,8 +104,7 @@ export class PoleOrbit extends Object3D implements ExternalDraggable {
       const externalBeforePress = this.externalManipulator;
       this.onPress?.();
       if (this.markerMode || externalBeforePress) return; // 标记模式/外部接管：按下即选中，不进入拖拽
-      this.dragging = true;
-      this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS); // 死区基准与球的显示位置一致
+      this.beginExternalDrag();
       if (this.frame(this.dragCenter, this.dragAxis)) { /* 冻结拖拽参照架 */ }
       this.dom.setPointerCapture(e.pointerId);
       if (this.dragControl) {
@@ -182,6 +182,7 @@ export class PoleOrbit extends Object3D implements ExternalDraggable {
   beginExternalDrag(): void {
     this.dragging = true;
     this.lastDragRadius = Math.max(this.orbitRadius, MIN_POLE_RADIUS);
+    this.onDragStart?.();
   }
 
   endExternalDrag(): void {

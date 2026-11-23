@@ -122,6 +122,23 @@ describe('DragTarget', () => {
     expect(t.isDragging).toBe(false);
   });
 
+  it('does not select or drag a hidden control group on a direct hit', () => {
+    const dom = makeDomStub();
+    const target = new DragTarget(makeCamera(), dom, new Vector3());
+    const select = vi.fn();
+    target.onPress = select;
+    target.visible = false;
+    dom.fire('pointerdown', { clientX: 400, clientY: 300 });
+    expect(select).not.toHaveBeenCalled();
+    expect(target.isDragging).toBe(false);
+
+    target.visible = true;
+    dom.fire('pointerdown', { clientX: 400, clientY: 300 });
+    expect(select).toHaveBeenCalledOnce();
+    expect(target.isDragging).toBe(true);
+    target.dispose();
+  });
+
   it('dispose：移除监听器；拖拽中途 dispose 也归还视角控制', () => {
     const dom = makeDomStub();
     const dragControl = { lock: vi.fn(), unlock: vi.fn() };

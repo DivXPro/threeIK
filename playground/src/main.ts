@@ -1,12 +1,11 @@
 import { createScene } from './scene';
-import { createIkTab } from './tab-ik';
-import { createConstraintsTab } from './tab-constraints';
-import { createRetargetTab } from './tab-retarget';
-import { createAnimIkTab } from './tab-anim-ik';
+import { createPoseIkTab } from './tab-pose-ik';
+import type { CharacterPose } from './character';
 
 export interface TabHandle {
-  mount(): void;
+  mount(pose?: CharacterPose): void;
   unmount(): void;
+  capturePose?(): CharacterPose | undefined;
 }
 
 export type PlaygroundContext = ReturnType<typeof createScene>;
@@ -21,23 +20,25 @@ const ctx = createScene(document.getElementById('app')!);
 };
 
 async function start() {
+  const poseControlView = { showAll: false };
   const tabs: Record<string, TabHandle> = {
-    'IK': createIkTab(ctx),
-    '约束': createConstraintsTab(ctx),
-    '重定向': createRetargetTab(ctx),
-    '动画+IK': createAnimIkTab(ctx),
+    'Fullbody IK': createPoseIkTab(ctx, poseControlView, 'fullbody'),
+    '原始 IK': createPoseIkTab(ctx, poseControlView, 'legacy'),
   };
   const tabsEl = document.getElementById('tabs')!;
   let active: TabHandle | null = null;
+  let incomingPose: CharacterPose | undefined;
   for (const [name, tab] of Object.entries(tabs)) {
     const btn = document.createElement('button');
     btn.textContent = name;
     btn.onclick = () => {
+      if (active === tab) return;
+      incomingPose = active?.capturePose && tab.capturePose ? active.capturePose() ?? incomingPose : undefined;
       tabsEl.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       active?.unmount();
       active = tab;
-      tab.mount();
+      tab.mount(incomingPose);
     };
     tabsEl.appendChild(btn);
   }

@@ -500,6 +500,8 @@ describe('createSkeletonControls', () => {
     const legH = ctl.get<LimbControlHandle>('leg')!;
     const converge = () => { for (let i = 0; i < 4; i++) { rig.update(0); ctl.update(); scene.updateMatrixWorld(true); } };
     converge();
+    legH.pole.beginExternalDrag();
+    legH.pole.endExternalDrag();
     ctl.setManipulatorMode('rotate');
     ctl.select('leg:root');
 

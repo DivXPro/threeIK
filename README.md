@@ -162,10 +162,17 @@ ctl.setHotkeys(false);          // 完全自绑出口：卸下全部监听，自
 ## Playground
 
 ```bash
+npm ci
+npm run build
 cd playground
-npm install
-npm run fetch-assets   # 下载 Soldier.glb（three.js 官方示例模型，被 .gitignore 排除不入库）
+npm ci
+npm run fetch-assets   # 下载当前角色使用的 Xbot.glb
 npm run dev            # http://localhost:5199
 ```
 
-四个页签：IK、约束、重定向、动画+IK，对应库的四条主用法路径。
+- Playground 默认进入 **Fullbody IK**，可切换到 **原始 IK**。两种模式共用参考 [Cascadeur AutoPosing](https://cascadeur.com/help/tools/animation_tools/autoposing) 布置的 36 个预置点。
+- 默认显示骨盆、颈根、双腕和双踝 6 个主点，以及 13 个小号关节点。点选一个部位可展开朝向、手掌、脚跟、脚尖等细调点，点空白或按 `Esc` 收起。「显示全部控制点」可展开所有部位。球支持 `W` 移动和 `E` 旋转，方块只移动，环只旋转。
+- **原始 IK** 使用 TwoBone、FABRIK 和 CCD。移动肘、膝会调整原有的 pole 朝向和弯度。移动朝向、手掌及脚部偏置点会转动对应的骨骼或调整关节朝向。
+- **Fullbody IK** 使用 [Fullbody Pose Maker](https://github.com/neka-nat/fullbody-pose-maker/tree/f687e407faaa5b8734d8a9ba89f5ec72517d2878) 的数值雅可比转置求解器。初始约束双腕和双踝的位置，其余预置点在操作时激活对应约束。可选任意骨骼添加控制点，也可手动开关约束。切换模式时，目标模式以当前姿势初始化。上游许可见 `playground/public/licenses/fullbody-pose-maker.txt`。
+- Fullbody 的「躯干稳定」默认 40%，摆四肢时让骨盆和胸口优先保持当前姿势。直接调整躯干后，下次摆四肢时会以调整后的姿势为参照。调到 0% 可对比原版的全身联动。
+- 勾选「拖四肢时固定躯干」后，求解会锁住骨盆平移和躯干骨骼的旋转。直接拖动躯干控制点时临时解锁，松手后按新的姿势锁定。

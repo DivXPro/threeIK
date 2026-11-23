@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "fetch-assets": "node scripts/fetch-soldier.mjs"
+    "fetch-assets": "node scripts/fetch-xbot.mjs"
   },
   "dependencies": {
     "three": "^0.170.0",

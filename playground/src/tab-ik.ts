@@ -1,207 +1,236 @@
-import GUI from 'lil-gui';
-import type { CCDIkModifier } from '@dreamerbird/threeik';
+import type GUI from 'lil-gui';
+import { Object3D, Quaternion, Vector3, type Camera } from 'three';
 import {
   createSkeletonControls,
   type BoneControlHandle,
   type ChainControlHandle,
+  type DragTarget,
   type LimbControlHandle,
   type LookAtControlHandle,
+  type PoleOrbit,
   type RootControlHandle,
-  type SkeletonControls,
+  type RotateRings,
 } from '@dreamerbird/threeik/controls';
-import { loadCharacter, type LoadedCharacter } from './character';
-import type { TabHandle, PlaygroundContext } from './main';
+import type { LoadedCharacter } from './character';
 
-export function createIkTab(ctx: PlaygroundContext): TabHandle {
-  let gui: GUI | null = null;
-  let character: LoadedCharacter | null = null;
-  let ctl: SkeletonControls | null = null;
-  let unsubFrame: (() => void) | null = null;
+export function createLegacyPoseEngine({ rig, facing }: LoadedCharacter, camera: Camera, gui: GUI) {
+  const bone = (name: string) => rig.getBoneAt(rig.boneIndex(`mixamorig${name}`));
+  const poleHint = (root: string, middle: string, end: string, fallback: number) => {
+    const origin = bone(root).getWorldPosition(new Vector3());
+    const joint = bone(middle).getWorldPosition(new Vector3());
+    const axis = bone(end).getWorldPosition(new Vector3()).sub(origin).normalize();
+    const offset = joint.clone().sub(origin);
+    return offset.addScaledVector(axis, -offset.dot(axis)).lengthSq() > 1e-8
+      ? joint
+      : joint.addScaledVector(facing, fallback);
+  };
+  const controls = createSkeletonControls({
+    rig, camera, facing,
+    // The common pose editor owns rendering and input. These targets only feed the original modifiers.
+    scene: new Object3D(),
+    dom: document.createElement('div'),
+    manipulator: { attachedTo: null, setMode() {}, attach() {}, dispose() {} },
+    hotkeys: false,
+    controls: [
+      { kind: 'root', name: 'hips', bone: 'mixamorigHips', rotation: true },
+      ...(['Left', 'Right'] as const).map(side => ({
+        kind: 'limb' as const, name: `leg${side[0]}`,
+        rootBone: `mixamorig${side}UpLeg`, middleBone: `mixamorig${side}Leg`, endBone: `mixamorig${side}Foot`,
+        carry: false, endRotation: true, rootRotation: true,
+        pole: { position: poleHint(`${side}UpLeg`, `${side}Leg`, `${side}Foot`, 0.2) },
+      })),
+      { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck' },
+      { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2' },
+      { kind: 'bone', name: 'neck', bone: 'mixamorigNeck' },
+      { kind: 'bone', name: 'clavicleL', bone: 'mixamorigLeftShoulder' },
+      { kind: 'bone', name: 'clavicleR', bone: 'mixamorigRightShoulder' },
+      { kind: 'bone', name: 'toeL', bone: 'mixamorigLeftToeBase' },
+      { kind: 'bone', name: 'toeR', bone: 'mixamorigRightToeBase' },
+      ...(['Left', 'Right'] as const).map(side => ({
+        kind: 'limb' as const, name: `arm${side[0]}`,
+        rootBone: `mixamorig${side}Arm`, middleBone: `mixamorig${side}ForeArm`, endBone: `mixamorig${side}Hand`,
+        endRotation: true, rootRotation: true,
+        pole: { position: poleHint(`${side}Arm`, `${side}ForeArm`, `${side}Hand`, -0.2) },
+      })),
+      { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', rotateShare: 0.4 },
+    ],
+  });
+  const hips = controls.get<RootControlHandle>('hips')!;
+  const spine = controls.get<ChainControlHandle>('spine')!;
+  const head = controls.get<LookAtControlHandle>('head')!;
+  const chest = controls.get<BoneControlHandle>('chest')!;
+  const neck = controls.get<BoneControlHandle>('neck')!;
+
+  const targets = new Map<string, { target: DragTarget; joint: Object3D }>([
+    ['hips', { target: hips.target, joint: bone('Hips') }],
+    ['neck', { target: spine.target, joint: bone('Neck') }],
+  ]);
+  const rotations = new Map<string, RotateRings>([
+    ['hips', hips.rings!], ['chest', chest.rings], ['head', head.rings!],
+  ]);
+  const ringJoints = new Map<RotateRings, Object3D>([
+    [hips.rings!, bone('Hips')], [chest.rings, bone('Spine2')], [neck.rings, bone('Neck')],
+  ]);
+  const landmarkRings = new Map<string, RotateRings>([['hips:front', hips.rings!], ['chest:front', chest.rings]]);
+  const middleControls = new Map<string, { limb: LimbControlHandle; bone: Object3D }>();
+  const translatedControls = new Map<string, DragTarget>([['spine', spine.target], ['chest', spine.target]]);
+  const modifiers = gui.addFolder('原始 IK 参数');
+  const limbs: LimbControlHandle[] = [];
+  for (const side of ['Left', 'Right'] as const) {
+    const suffix = side[0];
+    const arm = controls.get<LimbControlHandle>(`arm${suffix}`)!;
+    const leg = controls.get<LimbControlHandle>(`leg${suffix}`)!;
+    const clavicle = controls.get<BoneControlHandle>(`clavicle${suffix}`)!;
+    const toe = controls.get<BoneControlHandle>(`toe${suffix}`)!;
+    limbs.push(arm, leg);
+    for (const [limb, end, middle, direction] of [
+      [arm, 'Hand', 'ForeArm', 'elbow-direction'],
+      [leg, 'Foot', 'Leg', 'knee-direction'],
+    ] as const) {
+      const name = limb.name;
+      const endBone = bone(side + end);
+      targets.set(name, { target: limb.target, joint: endBone });
+      rotations.set(name, limb.rings!);
+      ringJoints.set(limb.rings!, endBone);
+      rotations.set(`${name}:root`, limb.shoulderRings!);
+      rotations.set(`${name}:elbow`, limb.elbowRings);
+      middleControls.set(`${name}:elbow`, { limb, bone: bone(side + middle) });
+      middleControls.set(`${name}:${direction}`, { limb, bone: bone(side + middle) });
+      landmarkRings.set(`${name}:side`, limb.rings!);
+    }
+    rotations.set(`${arm.name}:clavicle`, clavicle.rings);
+    ringJoints.set(clavicle.rings, bone(`${side}Shoulder`));
+    ringJoints.set(toe.rings, bone(`${side}ToeBase`));
+    landmarkRings.set(`${arm.name}:root`, clavicle.rings);
+    landmarkRings.set(`${arm.name}:palm`, arm.rings!);
+    landmarkRings.set(`${leg.name}:heel`, leg.rings!);
+    landmarkRings.set(`${leg.name}:toe`, toe.rings);
+    translatedControls.set(`${arm.name}:clavicle`, spine.target);
+    translatedControls.set(`${leg.name}:root`, hips.target);
+  }
+
+  for (const [name, mod] of [
+    ['骨盆 RootMotion', hips.modifier], ['FABRIK 颈根', spine.modifier], ['CCD 头部注视', head.modifier],
+    ...limbs.map(limb => [`TwoBone ${limb.name}`, limb.modifier] as const),
+  ] as const) {
+    const folder = modifiers.addFolder(name).close();
+    folder.add(mod, 'active').name('启用');
+    folder.add(mod, 'influence', 0, 1, 0.01).name('权重');
+    if ('maxIterations' in mod) {
+      folder.add(mod, 'maxIterations', 1, 30, 1).name('迭代次数');
+      folder.add(mod, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
+    }
+  }
+  modifiers.add(chest.modifier, 'active').name('胸口旋转');
+  modifiers.add(neck.modifier, 'active').name('颈部旋转');
+  const limits = { reachScale: 1, keepAlive: 1, hipsRadius: 0.4, headRadius: 0.35, headAngle: 105 };
+  const clamp = modifiers.addFolder('钳制范围');
+  clamp.add(limits, 'reachScale', 0.3, 1.5, 0.01).name('位置球半径倍率').onChange((scale: number) => {
+    for (const limb of limbs) limb.setReachScale(scale);
+    spine.setReachScale(scale);
+  });
+  clamp.add(limits, 'keepAlive', 0.85, 1, 0.005).name('四肢伸展上限').onChange((value: number) => {
+    for (const limb of limbs) limb.setKeepAlive(value);
+  });
+  clamp.add(limits, 'hipsRadius', 0.1, 0.8, 0.01).name('骨盆活动半径(m)').onChange((value: number) => hips.setRadius(value));
+  clamp.add(limits, 'headRadius', 0.3, 1, 0.05).name('注视距离(m)').onChange((value: number) => head.setRadius(value));
+  clamp.add(limits, 'headAngle', 30, 170, 1).name('注视半角(°)').onChange((value: number) => head.setConeAngleDeg(value));
+  modifiers.close();
+
+  const pivot = new Vector3();
+  const from = new Vector3();
+  const to = new Vector3();
+  const swing = new Quaternion();
+  const orientation = new Quaternion();
+  let draggedTarget: DragTarget | PoleOrbit | undefined;
+  function endMove() {
+    draggedTarget?.endExternalDrag();
+    draggedTarget = undefined;
+  }
+  function beginMove(target: DragTarget | PoleOrbit) {
+    if (draggedTarget === target) return;
+    endMove();
+    target.beginExternalDrag();
+    draggedTarget = target;
+  }
+  function aimFromLandmark(joint: Object3D, effector: Object3D, desired: Vector3): boolean {
+    joint.getWorldPosition(pivot);
+    effector.getWorldPosition(from).sub(pivot);
+    to.copy(desired).sub(pivot);
+    if (from.lengthSq() < 1e-10 || to.lengthSq() < 1e-10) return false;
+    swing.setFromUnitVectors(from.normalize(), to.normalize());
+    return true;
+  }
 
   return {
-    async mount() {
-      character = await loadCharacter(ctx.scene);
-      const rig = character.rig;
-      // 调试：控制台可直读 rig/控制点句柄（page 重载后失效，随 mount 重建）
-      Object.assign((window as unknown as { __threeik: Record<string, unknown> }).__threeik, { rig });
-
-      // 角色朝向（由加载器按模型局部前方实测）：方向锥轴/pole 自动摆位的参照
-      const facing = character.facing;
-
-      // 声明式装配：hips(重心) → 双腿(脚钉地 carry:false) → spine(弯腰) → 胸口/脖子(直接掰骨)
-      // → 双臂(肩=大臂旋转环、肘 pole 朝后) → head(注视)。声明顺序即同深度 tiebreak（腿先于脊柱）；深度排序由装配器完成。
-      // 初始化保持 T 姿势：位置球不设 position（缺省 = 端骨 rest 世界位置，零位移）；keepAlive 默认 1
-      // （完全伸直）：pole 球恒 ⊥ 链轴，roll 修正把肘/膝方向带过退化点，四肢能真正伸直到 rest
-      ctl = createSkeletonControls({
-        rig,
-        scene: ctx.scene,
-        camera: ctx.camera,
-        dom: ctx.renderer.domElement,
-        dragControl: ctx.dragControl,
-        facing,
-        // 快捷键（W/E/Escape）收归库内默认表；模式变化回调同步 GUI 下拉框——
-        // params/modeCtrl 声明在后，闭包延迟到按键/GUI 时执行（构造只注册监听不触发）
-        onManipulatorModeChange: (m) => { params.manipulatorMode = m; modeCtrl?.updateDisplay(); },
-        controls: [
-          { kind: 'root', name: 'hips', bone: 'mixamorigHips', color: 0xff3399, position: [0, 1.06, 0], rotation: true },
-          {
-            kind: 'limb', name: 'legL',
-            rootBone: 'mixamorigLeftUpLeg', middleBone: 'mixamorigLeftLeg', endBone: 'mixamorigLeftFoot',
-            color: 0x3388ff,
-            carry: false, // 脚钉地：下蹲演示的基础（锚点 UpLeg 随髋动）
-            endRotation: true, // ①脚朝向：rotate 模式下脚部旋转环
-            rootRotation: true, // 髋部 = 髋关节掰大腿（扭转+摆动，脚跟随）
-            pole: { color: 0xffcc00, position: [0.25, 0.9, 1.2] },
-          },
-          {
-            kind: 'limb', name: 'legR',
-            rootBone: 'mixamorigRightUpLeg', middleBone: 'mixamorigRightLeg', endBone: 'mixamorigRightFoot',
-            color: 0x22dddd,
-            carry: false,
-            endRotation: true,
-            rootRotation: true,
-            pole: { color: 0xff9933, position: [-0.25, 0.9, 1.2] },
-          },
-          // 脊柱 FABRIK 拉躯干（Spine→Neck）
-          { kind: 'chain', name: 'spine', rootBone: 'mixamorigSpine', endBone: 'mixamorigNeck', color: 0xcc66ff },
-          // 直接掰骨（纯旋转：点标记球选中即出环，不看 W/E）：胸口拧上半身/侧倾、脖子摆头。
-          // 深度排序：胸口环在脊柱 FABRIK 之后生效（弯腰之上再拧）；脖子环声明在头部注视之前
-          // （同深度按声明顺序）：CCD 随后把头重新瞄准注视球——摆脖子不会丢注视
-          { kind: 'bone', name: 'chest', bone: 'mixamorigSpine2', color: 0xff99cc },
-          { kind: 'bone', name: 'neck', bone: 'mixamorigNeck', color: 0xdddd99 },
-          {
-            kind: 'limb', name: 'armL',
-            rootBone: 'mixamorigLeftArm', middleBone: 'mixamorigLeftForeArm', endBone: 'mixamorigLeftHand',
-            color: 0xff5533,
-            endRotation: true, // 手腕翻向
-            rootRotation: true, // 肩部 = 肩关节掰大臂（扭转+摆动，手跟随）——不掰锁骨，那不符合人体构造
-            // 肘 pole：球以定长绕「肩→腕」链轴转（轨道球），初始方向提示摆肘的后下方（世界 -Z = 身后，≈自然垂臂的弯曲方向）
-            pole: { color: 0xccff66, position: [0.38, 0.98, -0.2] },
-          },
-          {
-            kind: 'limb', name: 'armR',
-            rootBone: 'mixamorigRightArm', middleBone: 'mixamorigRightForeArm', endBone: 'mixamorigRightHand',
-            color: 0x33ff77,
-            endRotation: true,
-            rootRotation: true,
-            pole: { color: 0x66ffcc, position: [-0.38, 0.98, -0.2] },
-          },
-          // 头部 CCD（Neck→Head）在脊柱结果上叠加注视——深度排序保证 head 排在 spine 之后。
-          // 注视 = 面部追球:球缺省生成在当前视线上(进场零跳动,保持 T 姿势);
-          // rotateShare：单控制点双通道——W 拖注视球，E 出头骨环（拖环 = 头转 60% + 脖子跟转 40%，
-          // 松手自动把球摆回当前视线保持朝向，无需接线）
-          { kind: 'lookAt', name: 'head', rootBone: 'mixamorigNeck', endBone: 'mixamorigHead', color: 0xffffff, rotateShare: 0.4 },
-        ],
-      });
-      Object.assign((window as unknown as { __threeik: Record<string, unknown> }).__threeik, { ctl });
-
-      const frameCb = () => {
-        rig.update(1 / 60); // 无动画路径：base = rest，直接 update
-        ctl!.update();      // 求解后：携带 → 环跟随 → 引导线
-      };
-      unsubFrame = ctx.onFrame(frameCb);
-
-      // ---- GUI：钳制/求解参数全部走控制点句柄，setter 立即生效 ----
-      const hipsH = ctl.get<RootControlHandle>('hips')!;
-      const legLH = ctl.get<LimbControlHandle>('legL')!;
-      const legRH = ctl.get<LimbControlHandle>('legR')!;
-      const armLH = ctl.get<LimbControlHandle>('armL')!;
-      const armRH = ctl.get<LimbControlHandle>('armR')!;
-      const spineH = ctl.get<ChainControlHandle>('spine')!;
-      const headH = ctl.get<LookAtControlHandle>('head')!;
-      const bones = ['chest', 'neck']
-        .map((n) => ctl!.get<BoneControlHandle>(n)!);
-      const limbs = [legLH, legRH, armLH, armRH];
-
-      // 钳制参数。四肢伸展上限（poleKeepAlive）：默认 1 = 完全伸直（pole 球恒 ⊥ 链轴，roll 修正
-      // 把肘/膝方向带过退化点——实测弯→伸→弯稳定）；滑到 <1 可体验「永远留弯度」的旧行为
-      // （注意 0.96 会在手臂这种短骨链上摆出 15°+ 上臂摆角，看起来像耸肩缩脖）
-      const clampParams = {
-        reachScale: 1,
-        poleKeepAlive: 1,
-        hipsRadius: 0.4,
-        headRadius: 0.35, headAngleDeg: 105,
-      };
-      const applyReach = () => {
-        for (const l of limbs) {
-          l.setReachScale(clampParams.reachScale);
-          l.setKeepAlive(clampParams.poleKeepAlive);
-        }
-        spineH.setReachScale(clampParams.reachScale); // 脊柱无 pole，不吃 keepAlive
-      };
-      const applyHips = () => hipsH.setRadius(clampParams.hipsRadius);
-      const applyHeadCone = () => {
-        headH.setRadius(clampParams.headRadius);
-        headH.setConeAngleDeg(clampParams.headAngleDeg);
-      };
-      const params = { manipulatorMode: 'move' as 'move' | 'rotate' };
-
-      // 操纵器模式（Maya W/E）：W = 移动球 + 肘/膝 pole 球（双通道影子球）；E = 旋转环。
-      // 纯旋转控制点（胸口/脖子/肩/髋）两种模式都选中即出环——W/E 只对双通道控制点（髋/脚/手/肘）有意义
-      let modeCtrl: { updateDisplay(): void } | null = null;
-      const applyMode = (m: 'move' | 'rotate') => {
-        params.manipulatorMode = m;
-        ctl!.setManipulatorMode(m); // 实际变化才触发 onManipulatorModeChange：GUI 自同步幂等，无循环
-        modeCtrl?.updateDisplay();
-      };
-
-      gui = new GUI({ title: 'IK' });
-      modeCtrl = gui.add(params, 'manipulatorMode', { '移动 (W)': 'move', '旋转 (E)': 'rotate' })
-        .name('操纵器模式')
-        .onChange((v: 'move' | 'rotate') => applyMode(v));
-      for (const [name, mod] of [
-        ['髋部 RootMotion', hipsH.modifier],
-        ['TwoBone 左腿', legLH.modifier], ['TwoBone 右腿', legRH.modifier],
-        ['FABRIK 脊柱', spineH.modifier],
-        ['TwoBone 左臂', armLH.modifier], ['TwoBone 右臂', armRH.modifier],
-        ['CCD 头部注视', headH.modifier],
-      ] as const) {
-        const f = gui.addFolder(name);
-        f.add(mod, 'active').name('启用');
-        f.add(mod, 'influence', 0, 1, 0.01).name('influence');
-        if ('maxIterations' in mod) {
-          f.add(mod as CCDIkModifier, 'maxIterations', 1, 30, 1).name('迭代次数');
-          f.add(mod as CCDIkModifier, 'angularDeltaLimit', 0, Math.PI, 0.005).name('求解角步长(rad)');
-        }
+    controls,
+    rotationFor: (id?: string) => id ? rotations.get(id) : undefined,
+    move(id: string, effector: Object3D, marker: DragTarget, previous: Vector3) {
+      const desired = marker.position;
+      const direct = targets.get(id);
+      if (direct) {
+        if (marker.isDragging) beginMove(direct.target);
+        direct.target.moveTo(desired);
+        return;
       }
-      // 直接掰骨（胸口/脖子）：旋转专用控制点，选中即出环（不看 W/E）。
-      // 头环不列在此：它的分摊 modifier 由 head 控制点内部 gating 自管（只在拖拽期间激活），
-      // 手动常开会与注视 CCD 互锁钉死头部
-      const fBone = gui.addFolder('直接掰骨');
-      for (const [i, name] of ['胸口', '脖子'].entries()) {
-        fBone.add(bones[i]!.modifier, 'active').name(name);
+      const middle = middleControls.get(id);
+      if (middle) {
+        const { pole } = middle.limb;
+        if (id.endsWith('-direction')) {
+          pole.setDirection(to.copy(desired).sub(middle.bone.getWorldPosition(pivot)));
+        } else {
+          beginMove(pole);
+          pole.ball.position.copy(pole.worldToLocal(to.copy(desired)));
+          pole.reclamp();
+          if (!marker.isDragging) endMove();
+        }
+        return;
       }
-      // 球的范围钳制参数（区别于求解器的"求解角步长"）
-      const fClamp = gui.addFolder('钳制（拖球范围）');
-      fClamp.add(clampParams, 'reachScale', 0.3, 1.5, 0.01).name('位置球半径倍率').onChange(applyReach);
-      fClamp.add(clampParams, 'poleKeepAlive', 0.85, 1, 0.005).name('四肢伸展上限(pole保活)').onChange(applyReach);
-      fClamp.add(clampParams, 'hipsRadius', 0.1, 0.8, 0.01).name('髋部活动半径(m)').onChange(applyHips);
-      const reachInfo = {
-        臂: +armLH.reach.toFixed(3),
-        腿: +legLH.reach.toFixed(3),
-        脊柱: +spineH.reach.toFixed(3),
-      };
-      fClamp.add(reachInfo, '臂').name('臂链长(m,实测)').disable();
-      fClamp.add(reachInfo, '腿').name('腿链长(m,实测)').disable();
-      fClamp.add(reachInfo, '脊柱').name('脊柱链长(m,实测)').disable();
-      const fHead = fClamp.addFolder('头部注视球');
-      // 注视 = 面部追球(虚拟凝视点与球同距):任何半径都可达,不存在"球进可达域头拧去够球"的退化
-      fHead.add(clampParams, 'headRadius', 0.3, 1, 0.05).name('注视距离(m)').onChange(applyHeadCone);
-      fHead.add(clampParams, 'headAngleDeg', 30, 170, 1).name('半角(°)').onChange(applyHeadCone);
-      gui.add({ reset: () => rig.resetToRest() }, 'reset').name('重置 rest pose');
+      const translated = translatedControls.get(id);
+      if (translated) {
+        if (marker.isDragging) beginMove(translated);
+        translated.getWorldPosition(to).add(desired).sub(previous);
+        translated.moveTo(to);
+        return;
+      }
+      if (id === 'head:front') {
+        if (marker.isDragging) beginMove(head.target);
+        head.target.moveTo(desired);
+        return;
+      }
+      if (id === 'head') {
+        if (aimFromLandmark(bone('Head'), effector, desired)) {
+          if (marker.isDragging) beginMove(head.target);
+          head.target.getWorldPosition(to).sub(pivot).applyQuaternion(swing).add(pivot);
+          head.target.moveTo(to);
+        }
+        return;
+      }
+      const rings = landmarkRings.get(id);
+      if (rings) {
+        const joint = ringJoints.get(rings)!;
+        if (!aimFromLandmark(joint, effector, desired)) return;
+        rings.beginExternalDrag(-1);
+        rings.quaternion.copy(swing.multiply(joint.getWorldQuaternion(orientation)));
+        rings.updateExternalDrag();
+        rings.endExternalDrag();
+      }
     },
-    unmount() {
-      gui?.destroy();
-      gui = null;
-      unsubFrame?.();
-      unsubFrame = null;
-      ctl?.dispose(); // 球/引导线/髋锚点/modifier 统一清场
-      ctl = null;
-      if (character) {
-        ctx.scene.remove(character.root);
-        ctx.scene.remove(character.helper);
+    endMove,
+    update() {
+      rig.update(1 / 60);
+      controls.update();
+    },
+    reset() {
+      endMove();
+      for (const { target, joint } of targets.values()) target.moveTo(joint.getWorldPosition(to));
+      for (const [rings, joint] of ringJoints) rings.setOrientationCarry(joint.parent!);
+      for (const { limb, bone: joint } of middleControls.values()) {
+        limb.rollModifier.setAngle(0, 0);
+        limb.pole.setDirectionHint(joint.getWorldPosition(to));
       }
-      character = null;
+      head.target.moveTo(bone('Head').getWorldPosition(to).addScaledVector(facing, limits.headRadius));
+      controls.update();
     },
   };
 }

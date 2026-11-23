@@ -149,6 +149,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     rootBone: spec.rootBone, middleBone: spec.middleBone, endBone: spec.endBone,
     target, poleTarget: pole.ball,
   }]);
+  pole.onDragStart = () => modifier.updateConfig(0, { smoothPoleRoll: true });
 
   // 端骨旋转通道（endRotation）：旋转环驱动端骨朝向；CopyTransform 只拷旋转、不碰位置（位置仍归端球/链 IK）
   let rings: RotateRings | undefined;
@@ -332,6 +333,7 @@ export function buildLimbControl(ctx: ControlBuildContext, spec: LimbControlSpec
     // （弯臂时 rot(pole0) 去轴 ≡ E' 去轴——旋转保点积；直臂时 E' 离轴分量为零、只有 pole
     //  旋转生效：TwoBone 按 pole 方向让整链绕链轴滚 = 大臂/大腿扭转，肘/膝折痕转向）
     shoulderRings.onDragDelta = (_axisIndex, angle, axisWorld) => {
+      modifier.updateConfig(0, { smoothPoleRoll: false });
       _q0.setFromAxisAngle(axisWorld, angle);
       _midPos.copy(_sElbow0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0); // E'
       _endPos.copy(_sHand0).sub(_sRoot0).applyQuaternion(_q0).add(_sRoot0);   // H'

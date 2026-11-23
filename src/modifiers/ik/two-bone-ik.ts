@@ -1,7 +1,7 @@
-import { Object3D, Quaternion, Vector3 } from 'three';
+import { MathUtils, Object3D, Quaternion, Vector3 } from 'three';
 import type { SkeletonRig } from '../../core/skeleton-rig';
 import { ThreeIKError } from '../../core/errors';
-import { getLocalPoseRotation, getProjectedNormal, getSwing, isZeroApprox, snapVectorToPlane, xformQuatInv } from '../../core/math';
+import { getLocalPoseRotation, getProjectedNormal, getSwing, isZeroApprox, snapVectorToPlane, symmetrizeAngle, xformQuatInv } from '../../core/math';
 import { vectorFromSecondaryDirection } from '../../core/bone-axes';
 import type { BoneDirection, SecondaryDirection } from '../../core/bone-axes';
 import { Modifier } from '../modifier';
@@ -16,6 +16,8 @@ export interface TwoBoneIKConfig {
   /** 中骨局部空间里指向 pole 的轴向（用于 roll 修正）；'none' 跳过 roll 修正 */
   poleDirection?: SecondaryDirection;
   poleDirectionVector?: Vector3;
+  /** 弯度增大时逐步加入自动扭转，并限制扭转速度。 */
+  smoothPoleRoll?: boolean;
   extendEndBone?: boolean;
   endBoneDirection?: BoneDirection;
   endBoneLength?: number;
@@ -31,8 +33,14 @@ interface TwoBoneIKSetting {
   rootPos: Vector3;
   midPos: Vector3;
   endPos: Vector3;
+  poleRoll: number | null;
+  poleRollReference: number;
   config: TwoBoneIKConfig;
 }
+
+const POLE_ROLL_START_BEND = MathUtils.degToRad(10);
+const POLE_ROLL_FULL_BEND = MathUtils.degToRad(45);
+const POLE_ROLL_SPEED = MathUtils.degToRad(360);
 
 // 模块临时量（一次性分配，求解热路径零分配）。占用约定（防别名冲突）：
 // - resolveObj:                 _target/_targetPole 为输出槽；二者（尤其 _targetPole/poleDest）
@@ -123,6 +131,7 @@ export class TwoBoneIkModifier extends Modifier {
         rootBone, middleBone, endBone, rootInfo, midInfo,
         cachedLengthSq: total * total,
         rootPos: new Vector3(), midPos: new Vector3(), endPos: new Vector3(),
+        poleRoll: null, poleRollReference: 0,
         config,
       };
     });
@@ -132,17 +141,17 @@ export class TwoBoneIkModifier extends Modifier {
     return this.settings[i]!;
   }
 
-  processModification(rig: SkeletonRig, _delta: number): void {
+  processModification(rig: SkeletonRig, delta: number): void {
     for (const s of this.settings) {
       const destination = resolveObj(rig, s.config.target, _target);
       const poleDest = resolveObj(rig, s.config.poleTarget, _targetPole);
       if (!destination || !poleDest) continue;
-      this.processJoints(rig, s, destination, poleDest);
+      this.processJoints(rig, s, destination, poleDest, delta);
     }
   }
 
   /** translate TwoBoneIK3D::_process_joints（two_bone_ik_3d.cpp 780–843 行） */
-  private processJoints(rig: SkeletonRig, s: TwoBoneIKSetting, destinationIn: Vector3, poleDest: Vector3): void {
+  private processJoints(rig: SkeletonRig, s: TwoBoneIKSetting, destinationIn: Vector3, poleDest: Vector3, delta: number): void {
     const destination = _v4.copy(destinationIn);
     rig.getGlobalPosePosition(s.rootBone, s.rootPos);
     const rootToDest = _v1.copy(destination).sub(s.rootPos);
@@ -180,7 +189,7 @@ export class TwoBoneIkModifier extends Modifier {
       if (detPlusDist <= detMinusDist) s.midPos.copy(detPlus);
     }
 
-    this.cacheCurrentJointRotations(rig, s, poleDest);
+    this.cacheCurrentJointRotations(rig, s, poleDest, delta);
 
     rig.setPoseRotation(s.rootBone, s.rootInfo.currentLpose);
     // mid 的局部姿势相对 root 当前全局姿势（Godot: get_local_pose_rotation）
@@ -190,7 +199,7 @@ export class TwoBoneIkModifier extends Modifier {
   }
 
   /** translate two_bone_ik_3d.h 146–235 行（含 pole roll 修正） */
-  private cacheCurrentJointRotations(rig: SkeletonRig, s: TwoBoneIKSetting, poleDest: Vector3): void {
+  private cacheCurrentJointRotations(rig: SkeletonRig, s: TwoBoneIKSetting, poleDest: Vector3, delta: number): void {
     const parent = rig.getParentIndex(s.rootBone);
     const parentGpose = _qp.identity(); // 专用临时，贯穿全程
     if (parent >= 0) rig.getGlobalPoseQuaternion(parent, parentGpose);
@@ -222,20 +231,52 @@ export class TwoBoneIkModifier extends Modifier {
 
     // ---- roll 修正（poleDirection ≠ 'none' 时；求解热路径，零分配：全部走模块临时量）----
     const poleDirLocal = vectorFromSecondaryDirection(s.config.poleDirection ?? 'none', s.config.poleDirectionVector, _v1);
-    if (isZeroApprox(poleDirLocal.lengthSq())) return;
+    if (isZeroApprox(poleDirLocal.lengthSq())) {
+      s.poleRoll = null;
+      s.poleRollReference = 0;
+      return;
+    }
+
+    let roll = this.getTargetPoleRoll(s, poleDirLocal, poleDest);
+    if (s.config.smoothPoleRoll) roll = this.blendPoleRoll(s, roll, delta);
+    else s.poleRollReference = roll;
+    s.poleRoll = roll;
+    if (roll === 0) return;
+
+    const rootRoll = _q5.setFromAxisAngle(s.rootInfo.forwardVector, roll);
+    const midRoll = _q6.setFromAxisAngle(s.midInfo.forwardVector, roll);
+    s.rootInfo.currentLpose.multiply(rootRoll);
+    s.rootInfo.currentGpose.copy(parentGpose).multiply(s.rootInfo.currentLpose).normalize();
+    // mid 抵消 root 的 roll 后乘自身 roll（Godot: root_roll⁻¹ * mid_lpose * mid_roll）
+    s.midInfo.currentLpose.premultiply(_q4.copy(rootRoll).invert()).multiply(midRoll);
+    s.midInfo.currentGpose.copy(s.rootInfo.currentGpose).multiply(s.midInfo.currentLpose).normalize();
+  }
+
+  private blendPoleRoll(s: TwoBoneIKSetting, targetRoll: number, delta: number): number {
+    const bend = s.rootInfo.currentVector.angleTo(s.midInfo.currentVector);
+    const weight = MathUtils.smoothstep(bend, POLE_ROLL_START_BEND, POLE_ROLL_FULL_BEND);
+    const reference = s.poleRollReference;
+    const desired = reference + symmetrizeAngle(targetRoll - reference) * weight;
+    if (s.poleRoll === null || !(delta > 0)) return symmetrizeAngle(desired);
+    const maxStep = POLE_ROLL_SPEED * delta;
+    const step = MathUtils.clamp(symmetrizeAngle(desired - s.poleRoll), -maxStep, maxStep);
+    return symmetrizeAngle(s.poleRoll + step);
+  }
+
+  private getTargetPoleRoll(s: TwoBoneIKSetting, poleDirLocal: Vector3, poleDest: Vector3): number {
     const poleDir = getProjectedNormal(s.rootPos, s.endPos, poleDest, _v2);
-    if (isZeroApprox(poleDir.lengthSq())) return;
+    if (isZeroApprox(poleDir.lengthSq())) return 0;
     const a = _v5.copy(s.midInfo.currentVector).normalize(); // 全局 roll 轴（mid forward）
     const k = _v6.copy(poleDirLocal).applyQuaternion(s.midInfo.currentGpose).normalize(); // 全局 pole 向量
     const n = _v7.copy(poleDir).cross(_v8.copy(s.midPos).sub(s.rootPos).normalize()).normalize(); // 全局平面法线
-    if (isZeroApprox(a.lengthSq()) || isZeroApprox(k.lengthSq()) || isZeroApprox(n.lengthSq()) || isZeroApprox(n.dot(k))) return;
+    if (isZeroApprox(a.lengthSq()) || isZeroApprox(k.lengthSq()) || isZeroApprox(n.lengthSq()) || isZeroApprox(n.dot(k))) return 0;
 
     // c0·cosθ + c1·sinθ + c2 = 0
     const c0 = n.dot(_v8.copy(k).addScaledVector(a, -k.dot(a))); // n·(k−a(k·a))
     const c1 = n.dot(_v8.copy(a).cross(k)); // n·(a×k)
     const c2 = n.dot(a) * k.dot(a); // (n·a)(k·a)
     const r = Math.sqrt(c0 * c0 + c1 * c1);
-    if (isZeroApprox(r)) return;
+    if (isZeroApprox(r)) return 0;
     const phi = Math.atan2(c1, c0);
     const acosv = Math.acos(Math.min(1, Math.max(-1, -c2 / r)));
     const t1 = phi + acosv;
@@ -246,16 +287,7 @@ export class TwoBoneIkModifier extends Modifier {
     const k2p = snapVectorToPlane(n, _v8.copy(k).applyQuaternion(_q4.setFromAxisAngle(a, t2)), _v11).normalize();
     const s1 = isZeroApprox(poleProj.lengthSq()) ? Math.abs(t1) : k1p.dot(poleProj);
     const s2 = isZeroApprox(poleProj.lengthSq()) ? Math.abs(t2) : k2p.dot(poleProj);
-    const t = s1 >= s2 ? t1 : t2;
-
-    const rootRoll = _q5.setFromAxisAngle(s.rootInfo.forwardVector, t);
-    const midRoll = _q6.setFromAxisAngle(s.midInfo.forwardVector, t);
-    s.rootInfo.currentLpose.multiply(rootRoll);
-    s.rootInfo.currentGpose.copy(parentGpose).multiply(s.rootInfo.currentLpose).normalize();
-    rootGpose.copy(s.rootInfo.currentGpose);
-    // mid 抵消 root 的 roll 后乘自身 roll（Godot: root_roll⁻¹ * mid_lpose * mid_roll）
-    s.midInfo.currentLpose.premultiply(_q4.copy(rootRoll).invert()).multiply(midRoll);
-    s.midInfo.currentGpose.copy(rootGpose).multiply(s.midInfo.currentLpose).normalize();
+    return symmetrizeAngle(s1 >= s2 ? t1 : t2);
   }
 
   toJSON(): Record<string, unknown> {
